@@ -4,6 +4,8 @@
 // ============================================================================
 
 const STORAGE_KEY = 'smp_dyah_pithaloka_absensi_v1';
+const SESSION_KEY = 'smp_dyah_pithaloka_active_session_user';
+const IDLE_TIMEOUT_MS = 15 * 60 * 1000; // 15 Menit Batas Idle Auto-Logout
 
 function getTodayISO() {
   const now = new Date();
@@ -33,6 +35,58 @@ function formatDateID(isoDate) {
     month: 'long',
     year: 'numeric'
   });
+}
+
+// ============================================================================
+// AUTO CLEANUP & DATA RETENTION RULES:
+// 1. Riwayat Pelaksanaan Guru Piket Harian otomatis hilang saat berganti bulan.
+// 2. Catatan Absensi Siswa & Guru di Firebase & Lokal otomatis dihapus permanen
+//    setelah lewat dari 2 bulan (> 60 hari).
+// ============================================================================
+function cleanupExpiredData(database) {
+  if (!database) return { piketRemoved: 0, attendanceRemoved: 0 };
+  const today = getTodayISO();
+  const [currY, currM] = today.split('-').map(Number);
+  const currentMonthKey = `${currY}-${String(currM).padStart(2, '0')}`;
+
+  // Ambang batas 2 bulan yang lalu (60 hari)
+  const twoMonthsAgoDate = addDaysISO(today, -60);
+
+  let piketRemoved = 0;
+  let attendanceRemoved = 0;
+
+  // 1. Bersihkan Riwayat Piket: Otomatis hilang setelah berganti bulan (hanya simpan bulan berjalan)
+  if (database.piketLogs && typeof database.piketLogs === 'object') {
+    Object.keys(database.piketLogs).forEach(dateKey => {
+      const logMonth = dateKey.slice(0, 7);
+      if (logMonth < currentMonthKey) {
+        delete database.piketLogs[dateKey];
+        piketRemoved++;
+      }
+    });
+  }
+
+  // 2. Bersihkan Absensi Siswa: Dihapus permanen jika lewat dari 2 bulan
+  if (database.studentAttendance && typeof database.studentAttendance === 'object') {
+    Object.keys(database.studentAttendance).forEach(dateKey => {
+      if (dateKey < twoMonthsAgoDate) {
+        delete database.studentAttendance[dateKey];
+        attendanceRemoved++;
+      }
+    });
+  }
+
+  // 3. Bersihkan Absensi Guru: Dihapus permanen jika lewat dari 2 bulan
+  if (database.teacherAttendance && typeof database.teacherAttendance === 'object') {
+    Object.keys(database.teacherAttendance).forEach(dateKey => {
+      if (dateKey < twoMonthsAgoDate) {
+        delete database.teacherAttendance[dateKey];
+        attendanceRemoved++;
+      }
+    });
+  }
+
+  return { piketRemoved, attendanceRemoved };
 }
 
 function createInitialData() {
@@ -251,12 +305,39 @@ function createInitialData() {
 // ============================================================================
 // STATE MANAGEMENT
 // ============================================================================
+function getStoredSessionUser() {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY);
+    if (!raw) return null;
+    const sessionObj = JSON.parse(raw);
+    if (sessionObj && sessionObj.username) {
+      // Periksa apakah sesi sudah idle melebihi 15 menit
+      const lastActive = sessionObj.lastActive || sessionObj.loginAt;
+      if (lastActive) {
+        const diff = Date.now() - new Date(lastActive).getTime();
+        if (diff > IDLE_TIMEOUT_MS) {
+          // Melebihi 15 menit tanpa aktivitas
+          localStorage.removeItem(SESSION_KEY);
+          return null;
+        }
+      }
+      // Validasi dengan user yang ada di database
+      const found = db.users.find(u => u.username.toLowerCase() === sessionObj.username.toLowerCase());
+      return found || null;
+    }
+  } catch (_) {}
+  return null;
+}
+
 let db = loadDatabase();
+const initialUser = getStoredSessionUser();
 let state = {
-  currentUser: null,
-  activeMenu: 'dashboard', // 'dashboard' | 'absen-siswa' | 'absen-guru' | 'rekap' | 'log-piket' | 'superadmin'
+  currentUser: initialUser,
+  activeMenu: initialUser ? (initialUser.role === 'superadmin' ? 'superadmin' : 'dashboard') : 'dashboard',
   selectedDate: getTodayISO(),
   selectedRombel: db.rombels[0] || 'VII-A',
+  daftarRombel: 'ALL',
+  daftarSearch: '',
   studentSearch: '',
   teacherSearch: '',
   rekapTab: 'mingguan', // 'mingguan' | 'bulanan'
@@ -265,7 +346,9 @@ let state = {
   rekapWeekStart: addDaysISO(getTodayISO(), -6),
   rekapWeekEnd: getTodayISO(),
   rekapMonth: getTodayISO().slice(0, 7),
-  superadminTab: 'tema', // 'tema' | 'keterangan' | 'spreadsheet' | 'master-siswa' | 'master-guru' | 'master-akun'
+  superadminTab: 'tema', // 'tema' | 'keterangan' | 'firebase' | 'spreadsheet' | 'master-siswa' | 'master-guru' | 'master-akun'
+  superadminSiswaRombel: 'ALL',
+  superadminSiswaSearch: '',
   editModal: null // { type: 'student'|'teacher'|'user'|'rombel', data: {...} }
 };
 
@@ -290,6 +373,14 @@ function loadDatabase() {
       if (parsed.settings.schoolPhone === undefined) parsed.settings.schoolPhone = '(021) 7891234';
       if (parsed.settings.schoolEmail === undefined) parsed.settings.schoolEmail = 'info@smpdyahpithaloka.sch.id';
     }
+
+    // Jalankan auto-cleanup saat memuat data
+    const cleanupResult = cleanupExpiredData(parsed);
+    if (cleanupResult.piketRemoved > 0 || cleanupResult.attendanceRemoved > 0) {
+      console.log(`Auto-cleanup executed: ${cleanupResult.piketRemoved} old piket log(s) & ${cleanupResult.attendanceRemoved} attendance day(s) (>2 bulan) removed.`);
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed)); } catch (_) {}
+    }
+
     return parsed;
   } catch (e) {
     console.error('Gagal memuat database lokal, membuat ulang:', e);
@@ -376,6 +467,18 @@ function handleLogin(username, password) {
 
   state.currentUser = user;
   state.activeMenu = user.role === 'superadmin' ? 'superadmin' : 'dashboard';
+
+  // Simpan sesi login aktif ke browser agar saat di-refresh tidak ter-logout
+  try {
+    localStorage.setItem(SESSION_KEY, JSON.stringify({
+      username: user.username,
+      role: user.role,
+      name: user.name,
+      loginAt: new Date().toISOString(),
+      lastActive: Date.now()
+    }));
+  } catch (_) {}
+
   const today = getTodayISO();
   const nowTime = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) + ' WIB';
 
@@ -403,9 +506,17 @@ function handleLogin(username, password) {
   renderApp();
 }
 
-function handleLogout() {
+function handleLogout(isAutoIdle = false) {
   state.currentUser = null;
   state.activeMenu = 'dashboard';
+  try {
+    localStorage.removeItem(SESSION_KEY);
+  } catch (_) {}
+  if (isAutoIdle) {
+    showToast('⚠️ Sesi berakhir otomatis karena tidak ada aktivitas selama 15 menit.');
+  } else {
+    showToast('Anda telah keluar dari sesi login.');
+  }
   renderApp();
 }
 
@@ -433,8 +544,10 @@ function renderApp() {
         </div>
       </div>
     </div>
+    ${renderModalDialog()}
   `;
   bindMainEvents();
+  bindModalEvents();
 }
 
 // ============================================================================
@@ -577,6 +690,10 @@ function renderSidebar() {
             <span class="nav-icon">🎓</span>
             <span>Absen Siswa per Rombel</span>
           </button>
+          <button class="nav-btn ${state.activeMenu === 'daftar-siswa' ? 'active' : ''}" data-nav="daftar-siswa">
+            <span class="nav-icon">📋</span>
+            <span>Daftar Siswa per Rombel</span>
+          </button>
           <button class="nav-btn ${state.activeMenu === 'absen-guru' ? 'active' : ''}" data-nav="absen-guru">
             <span class="nav-icon">👨‍🏫</span>
             <span>Absen Dewan Guru</span>
@@ -640,6 +757,8 @@ function renderMainView() {
       return renderDashboardView();
     case 'absen-siswa':
       return renderStudentAttendanceView();
+    case 'daftar-siswa':
+      return renderDaftarSiswaView();
     case 'absen-guru':
       return renderTeacherAttendanceView();
     case 'rekap':
@@ -952,6 +1071,118 @@ function renderStudentAttendanceView() {
                   </tr>
                 `;
               }).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// ============================================================================
+// 2B. DAFTAR SISWA PER ROMBEL VIEW
+// ============================================================================
+function renderDaftarSiswaView() {
+  const currentRombel = state.daftarRombel;
+  const search = (state.daftarSearch || '').toLowerCase().trim();
+  const isSuper = state.currentUser && state.currentUser.role === 'superadmin';
+
+  const list = db.students.filter(s => {
+    const matchRombel = currentRombel === 'ALL' || s.rombel === currentRombel;
+    const matchSearch = !search ||
+      s.name.toLowerCase().includes(search) ||
+      s.nis.toLowerCase().includes(search) ||
+      s.rombel.toLowerCase().includes(search);
+    return matchRombel && matchSearch;
+  });
+
+  const totalSiswa = db.students.length;
+  const countL = list.filter(s => s.gender === 'L').length;
+  const countP = list.filter(s => s.gender === 'P').length;
+
+  return `
+    <div class="panel-card">
+      <div class="panel-header">
+        <div>
+          <h3>📋 Direktori & Daftar Siswa Berdasarkan Rombel</h3>
+          <p>${escapeHtml(db.settings.schoolName)} — Tahun Ajaran ${escapeHtml(db.settings.academicYear)} (${escapeHtml(db.settings.semester)})</p>
+        </div>
+        <div style="display:flex;gap:8px;">
+          ${isSuper ? `<button type="button" class="btn btn-gold btn-sm" id="btn-quick-add-student-modal">+ Tambah Siswa Baru</button>` : ''}
+          <button type="button" class="btn btn-black btn-sm" onclick="window.print()">🖨️ Cetak Daftar</button>
+        </div>
+      </div>
+
+      <div class="panel-body">
+        <div style="margin-bottom:12px;font-size:0.85rem;font-weight:700;color:var(--color-maroon);">Pilih Filter Rombel / Kelas:</div>
+        <div class="rombel-chips">
+          <button type="button" class="rombel-chip ${currentRombel === 'ALL' ? 'active' : ''}" data-daftar-rombel="ALL">
+            <span>Semua Rombel (${totalSiswa})</span>
+          </button>
+          ${db.rombels.map(r => {
+            const count = db.students.filter(s => s.rombel === r).length;
+            return `
+              <button type="button" class="rombel-chip ${r === currentRombel ? 'active' : ''}" data-daftar-rombel="${escapeHtml(r)}">
+                <span>Kelas ${escapeHtml(r)} (${count})</span>
+              </button>
+            `;
+          }).join('')}
+        </div>
+
+        <div class="toolbar">
+          <div class="toolbar-filters">
+            <div>
+              <label style="font-size:0.8rem;font-weight:700;display:block;margin-bottom:4px;">Cari Nama atau NIS</label>
+              <input type="text" id="daftar-search-input" class="form-control" placeholder="Ketik nama atau NIS siswa..." value="${escapeHtml(state.daftarSearch || '')}" />
+            </div>
+            <div>
+              <label style="font-size:0.8rem;font-weight:700;display:block;margin-bottom:4px;">Rombel Aktif</label>
+              <select id="daftar-rombel-select" class="form-control">
+                <option value="ALL" ${currentRombel === 'ALL' ? 'selected' : ''}>Semua Kelas / Rombel</option>
+                ${db.rombels.map(r => `<option value="${escapeHtml(r)}" ${currentRombel === r ? 'selected' : ''}>Kelas ${escapeHtml(r)}</option>`).join('')}
+              </select>
+            </div>
+          </div>
+          <div class="toolbar-actions">
+            <span class="badge badge-gold" style="font-size:0.85rem;padding:8px 12px;">
+              Total: ${list.length} Siswa (L: ${countL} | P: ${countP})
+            </span>
+            <button type="button" class="btn btn-maroon btn-sm" data-goto="absen-siswa">🎓 Pergi ke Absensi Kelas Ini</button>
+          </div>
+        </div>
+
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th style="width:50px;">No</th>
+                <th style="width:120px;">NIS</th>
+                <th>Nama Lengkap Siswa</th>
+                <th style="width:100px;">Jenis Kelamin</th>
+                <th style="width:130px;">Rombel / Kelas</th>
+                <th style="width:120px;">Status Akun</th>
+                ${isSuper ? '<th style="width:140px;">Aksi Superadmin</th>' : ''}
+              </tr>
+            </thead>
+            <tbody>
+              ${list.length === 0 ? `<tr><td colspan="${isSuper ? 7 : 6}" style="text-align:center;padding:24px;color:var(--color-text-muted);">Tidak ada data siswa ditemukan untuk kriteria ini.</td></tr>` : list.map((s, idx) => `
+                <tr>
+                  <td>${idx + 1}</td>
+                  <td><code>${escapeHtml(s.nis)}</code></td>
+                  <td><strong>${escapeHtml(s.name)}</strong></td>
+                  <td>${s.gender === 'L' ? 'Laki-laki (L)' : 'Perempuan (P)'}</td>
+                  <td><span class="badge badge-gold">Kelas ${escapeHtml(s.rombel)}</span></td>
+                  <td><span class="badge badge-H">Aktif</span></td>
+                  ${isSuper ? `
+                    <td>
+                      <div style="display:flex;gap:6px;">
+                        <button type="button" class="btn btn-sm btn-outline" data-open-edit-student="${escapeHtml(s.id)}">✏️ Edit</button>
+                        <button type="button" class="btn btn-sm" style="background:#FEE2E2;color:#B91C1C;border-color:#FCA5A5;" data-del-student="${escapeHtml(s.id)}">🗑️</button>
+                      </div>
+                    </td>
+                  ` : ''}
+                </tr>
+              `).join('')}
             </tbody>
           </table>
         </div>
@@ -1297,7 +1528,13 @@ function renderPiketLogView() {
     note: ''
   };
 
-  const allLogs = Object.values(db.piketLogs).sort((a, b) => (a.date < b.date ? 1 : -1));
+  const today = getTodayISO();
+  const currentMonthKey = today.slice(0, 7);
+
+  // Hanya menampilkan log piket di bulan berjalan (otomatis reset/hilang saat berganti bulan)
+  const currentMonthLogs = Object.values(db.piketLogs || {})
+    .filter(log => log.date && log.date.slice(0, 7) === currentMonthKey)
+    .sort((a, b) => (a.date < b.date ? 1 : -1));
 
   return `
     <div class="grid-2">
@@ -1329,8 +1566,9 @@ function renderPiketLogView() {
         <div class="panel-header">
           <div>
             <h3>📜 Riwayat Pelaksanaan Guru Piket Harian</h3>
-            <p>Rekam jejak siapa yang melaksanakan piket berdasarkan akun login</p>
+            <p>Bulan Berjalan (${currentMonthKey}) • Otomatis dibersihkan setiap pergantian bulan baru</p>
           </div>
+          <span class="badge badge-gold">${currentMonthLogs.length} Catatan Bulan Ini</span>
         </div>
         <div class="panel-body">
           <div class="table-responsive">
@@ -1345,7 +1583,7 @@ function renderPiketLogView() {
                 </tr>
               </thead>
               <tbody>
-                ${allLogs.map(log => `
+                ${currentMonthLogs.length === 0 ? `<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--color-text-muted);">Belum ada riwayat pelaksanaan piket di bulan ini.</td></tr>` : currentMonthLogs.map(log => `
                   <tr>
                     <td><strong>${escapeHtml(log.date)}</strong></td>
                     <td>${escapeHtml(log.name)}</td>
@@ -1356,6 +1594,9 @@ function renderPiketLogView() {
                 `).join('')}
               </tbody>
             </table>
+          </div>
+          <div style="margin-top:14px;padding:8px 12px;background:var(--color-bg);border-radius:6px;font-size:0.78rem;color:var(--color-text-muted);">
+            ℹ️ <em>Sistem secara otomatis menghapus riwayat piket dari bulan-bulan sebelumnya setiap kali memasuki bulan baru.</em>
           </div>
         </div>
       </div>
@@ -1629,11 +1870,23 @@ function renderSuperFirebaseTab() {
           </div>
 
           <div>
-            <h4 style="color:var(--color-maroon);margin-bottom:10px;">Status Sinkronisasi Real-Time</h4>
+            <h4 style="color:var(--color-maroon);margin-bottom:10px;">Status Sinkronisasi & Kebijakan Data</h4>
             <div style="padding:14px;background:#F8F6F4;border-left:4px solid var(--color-gold);border-radius:8px;font-size:0.85rem;line-height:1.6;">
               <p>✅ <strong>Real-time Listener:</strong> Aktif. Jika guru piket di perangkat lain menyimpan data, tampilan akan langsung diperbarui otomatis tanpa reload.</p>
               <p>✅ <strong>Offline Fallback:</strong> Sistem tetap menyimpan data di penyimpanan lokal (browser) sehingga tidak ada data yang hilang meskipun koneksi internet terputus.</p>
-              <p>✅ <strong>Koleksi Firestore:</strong> <code>absensi_dyah_pithaloka/main_database</code></p>
+              <p>✅ <strong>Struktur Dokumen Terpisah di Firestore:</strong></p>
+              <ul style="margin-left:20px;font-size:0.82rem;color:var(--color-text);">
+                <li><code>absensi_dyah_pithaloka/data_siswa</code> (Khusus data seluruh siswa)</li>
+                <li><code>absensi_dyah_pithaloka/data_guru</code> (Khusus dewan guru & staf)</li>
+                <li><code>absensi_dyah_pithaloka/akun_login</code> (Khusus akun login superadmin & guru)</li>
+                <li><code>absensi_dyah_pithaloka/data_rombel</code> (Khusus daftar kelas/rombel)</li>
+                <li><code>absensi_dyah_pithaloka/pengaturan_sekolah</code> (Logo & identitas sekolah)</li>
+                <li><code>absensi_dyah_pithaloka/catatan_absensi</code> (Catatan kehadiran & log piket)</li>
+              </ul>
+              <hr style="margin:10px 0;border:none;border-top:1px dashed var(--color-border);" />
+              <p style="color:var(--color-maroon);font-weight:700;">🧹 Kebijakan Pembersihan Otomatis (Auto Retention):</p>
+              <p>• <strong>Riwayat Guru Piket:</strong> Otomatis direset & hilang setelah berganti bulan (hanya menyimpan bulan berjalan).</p>
+              <p>• <strong>Catatan Absensi (Siswa & Guru):</strong> Otomatis dihapus permanen dari Firebase & lokal jika usianya sudah melewati 2 bulan (> 60 hari) guna menjaga performa dan kuota database tetap efisien.</p>
             </div>
           </div>
         </div>
@@ -1693,33 +1946,54 @@ function renderSuperSpreadsheetTab() {
 }
 
 function renderSuperSiswaTab() {
+  const filterR = state.superadminSiswaRombel || 'ALL';
+  const qSearch = (state.superadminSiswaSearch || '').toLowerCase().trim();
+
+  const filteredStudents = db.students.filter(s => {
+    const matchRombel = filterR === 'ALL' || s.rombel === filterR;
+    const matchSearch = !qSearch || s.name.toLowerCase().includes(qSearch) || s.nis.toLowerCase().includes(qSearch);
+    return matchRombel && matchSearch;
+  });
+
   return `
-    <div class="grid-2">
-      <div>
-        <h4 style="color:var(--color-maroon);margin-bottom:12px;">Kelola Daftar Rombel / Kelas</h4>
-        <div style="display:flex;gap:8px;margin-bottom:14px;">
-          <input type="text" id="new-rombel-name" class="form-control" placeholder="Nama Rombel baru (misal: VII-C)" />
+    <div class="panel-card" style="margin-bottom:20px;border:2px solid var(--color-gold);">
+      <div class="panel-header">
+        <div>
+          <h3>🏫 CRUD Kelola Data Rombel / Kelas</h3>
+          <p>Tambah rombel baru, edit/ganti nama rombel, atau hapus rombel yang tidak aktif</p>
+        </div>
+      </div>
+      <div class="panel-body">
+        <div style="display:flex;gap:10px;margin-bottom:14px;max-width:540px;">
+          <input type="text" id="new-rombel-name" class="form-control" placeholder="Nama Rombel baru (misal: VII-C atau IX-C)" />
           <button type="button" class="btn btn-maroon" id="btn-add-rombel">+ Tambah Rombel</button>
         </div>
+        <div style="font-size:0.82rem;font-weight:700;margin-bottom:8px;color:var(--color-text-muted);">Daftar Rombel Terdaftar (${db.rombels.length} Kelas):</div>
         <div class="rombel-chips">
-          ${db.rombels.map(r => `
-            <div class="rombel-chip">
-              <span>Kelas ${escapeHtml(r)}</span>
-              <button type="button" class="btn btn-sm" style="padding:2px 6px;background:#FEE2E2;color:#B91C1C;" data-del-rombel="${escapeHtml(r)}">✕</button>
-            </div>
-          `).join('')}
+          ${db.rombels.map(r => {
+            const count = db.students.filter(s => s.rombel === r).length;
+            return `
+              <div class="rombel-chip" style="display:inline-flex;align-items:center;gap:8px;padding:6px 12px;">
+                <span><strong>Kelas ${escapeHtml(r)}</strong> (${count} siswa)</span>
+                <button type="button" class="btn btn-sm btn-outline" style="padding:2px 6px;font-size:0.75rem;" data-open-edit-rombel="${escapeHtml(r)}" title="Edit / Ganti Nama Rombel">✏️</button>
+                <button type="button" class="btn btn-sm" style="padding:2px 6px;font-size:0.75rem;background:#FEE2E2;color:#B91C1C;border-color:#FCA5A5;" data-del-rombel="${escapeHtml(r)}" title="Hapus Rombel">🗑️</button>
+              </div>
+            `;
+          }).join('')}
         </div>
+      </div>
+    </div>
 
-        <hr style="margin:20px 0;border:none;border-top:1px solid var(--color-border);" />
-
-        <h4 style="color:var(--color-maroon);margin-bottom:12px;">Tambah Siswa Baru</h4>
+    <div class="grid-2">
+      <div>
+        <h4 style="color:var(--color-maroon);margin-bottom:12px;">+ Tambah Siswa Baru</h4>
         <div class="form-group">
-          <label>NIS Siswa</label>
-          <input type="text" id="new-stu-nis" class="form-control" placeholder="Contoh: 240799" />
+          <label>NIS (Nomor Induk Siswa)</label>
+          <input type="text" id="new-stu-nis" class="form-control" placeholder="Contoh: 240799" required />
         </div>
         <div class="form-group">
           <label>Nama Lengkap Siswa</label>
-          <input type="text" id="new-stu-name" class="form-control" placeholder="Nama lengkap siswa..." />
+          <input type="text" id="new-stu-name" class="form-control" placeholder="Masukkan nama lengkap siswa..." required />
         </div>
         <div class="grid-2">
           <div class="form-group">
@@ -1730,36 +2004,52 @@ function renderSuperSiswaTab() {
             </select>
           </div>
           <div class="form-group">
-            <label>Rombel / Kelas</label>
+            <label>Pilih Rombel / Kelas</label>
             <select id="new-stu-rombel" class="form-control">
-              ${db.rombels.map(r => `<option value="${escapeHtml(r)}">${escapeHtml(r)}</option>`).join('')}
+              ${db.rombels.map(r => `<option value="${escapeHtml(r)}">Kelas ${escapeHtml(r)}</option>`).join('')}
             </select>
           </div>
         </div>
-        <button type="button" class="btn btn-gold" id="btn-add-student">+ Simpan Siswa Baru</button>
+        <button type="button" class="btn btn-gold" id="btn-add-student" style="width:100%;padding:11px;font-weight:700;">+ Simpan Data Siswa Baru</button>
       </div>
 
       <div>
-        <h4 style="color:var(--color-maroon);margin-bottom:12px;">Daftar Seluruh Siswa (${db.students.length} Siswa)</h4>
-        <div class="table-responsive" style="max-height:420px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+          <h4 style="color:var(--color-maroon);margin:0;">Daftar Siswa Terdaftar (${db.students.length} Siswa)</h4>
+          <span style="font-size:0.8rem;color:var(--color-text-muted);">Tersaring: ${filteredStudents.length}</span>
+        </div>
+
+        <div style="display:flex;gap:8px;margin-bottom:12px;">
+          <select id="super-siswa-filter-rombel" class="form-control" style="width:160px;font-size:0.85rem;">
+            <option value="ALL" ${filterR === 'ALL' ? 'selected' : ''}>Semua Rombel</option>
+            ${db.rombels.map(r => `<option value="${escapeHtml(r)}" ${filterR === r ? 'selected' : ''}>Kelas ${escapeHtml(r)}</option>`).join('')}
+          </select>
+          <input type="text" id="super-siswa-search" class="form-control" style="font-size:0.85rem;" placeholder="Cari NIS / Nama siswa..." value="${escapeHtml(state.superadminSiswaSearch || '')}" />
+        </div>
+
+        <div class="table-responsive" style="max-height:430px;">
           <table class="data-table">
             <thead>
               <tr>
                 <th>NIS</th>
                 <th>Nama Siswa</th>
+                <th>L/P</th>
                 <th>Rombel</th>
-                <th>Aksi</th>
+                <th style="width:120px;">Aksi</th>
               </tr>
             </thead>
             <tbody>
-              ${db.students.map(s => `
+              ${filteredStudents.length === 0 ? `<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--color-text-muted);">Data siswa tidak ditemukan.</td></tr>` : filteredStudents.map(s => `
                 <tr>
                   <td><code>${escapeHtml(s.nis)}</code></td>
-                  <td>${escapeHtml(s.name)}</td>
-                  <td><span class="badge badge-gold">${escapeHtml(s.rombel)}</span></td>
-                  <td style="display:flex;gap:6px;">
-                    <button type="button" class="btn btn-sm btn-outline" data-edit-student="${escapeHtml(s.id)}">Edit</button>
-                    <button type="button" class="btn btn-sm" style="background:#FEE2E2;color:#B91C1C;" data-del-student="${escapeHtml(s.id)}">Hapus</button>
+                  <td><strong>${escapeHtml(s.name)}</strong></td>
+                  <td>${escapeHtml(s.gender)}</td>
+                  <td><span class="badge badge-gold">Kelas ${escapeHtml(s.rombel)}</span></td>
+                  <td>
+                    <div style="display:flex;gap:6px;">
+                      <button type="button" class="btn btn-sm btn-outline" data-open-edit-student="${escapeHtml(s.id)}">✏️</button>
+                      <button type="button" class="btn btn-sm" style="background:#FEE2E2;color:#B91C1C;border-color:#FCA5A5;" data-del-student="${escapeHtml(s.id)}">🗑️</button>
+                    </div>
                   </td>
                 </tr>
               `).join('')}
@@ -1827,35 +2117,46 @@ function renderSuperAkunTab() {
   return `
     <div class="grid-2">
       <div>
-        <h4 style="color:var(--color-maroon);margin-bottom:12px;">Tambah Akun Login Guru Piket / Admin</h4>
+        <h4 style="color:var(--color-maroon);margin-bottom:12px;">+ Tambah Akun Login Guru / Admin Baru</h4>
         <div class="form-group">
-          <label>Nama Lengkap Guru Piket</label>
-          <input type="text" id="new-acc-name" class="form-control" placeholder="Contoh: Ratna Sari Dewi, S.Pd" />
-        </div>
-        <div class="form-group">
-          <label>Username Login</label>
-          <input type="text" id="new-acc-username" class="form-control" placeholder="Contoh: piket4" />
-        </div>
-        <div class="form-group">
-          <label>Password</label>
-          <input type="text" id="new-acc-password" class="form-control" placeholder="Masukkan password..." value="123" />
-        </div>
-        <div class="form-group">
-          <label>Jadwal Hari Piket</label>
-          <input type="text" id="new-acc-schedule" class="form-control" placeholder="Contoh: Kamis & Sabtu" />
-        </div>
-        <div class="form-group">
-          <label>Peran Akun</label>
-          <select id="new-acc-role" class="form-control">
-            <option value="piket">Guru Piket Harian (Admin Harian)</option>
-            <option value="superadmin">Superadmin</option>
+          <label>Pilih Guru yang Ada (Opsional untuk mengisi otomatis)</label>
+          <select id="select-teacher-for-acc" class="form-control">
+            <option value="">-- Pilih dari Daftar Dewan Guru --</option>
+            ${db.teachers.map(t => `<option value="${escapeHtml(t.name)}">${escapeHtml(t.name)} (${escapeHtml(t.subject)})</option>`).join('')}
           </select>
         </div>
-        <button type="button" class="btn btn-gold" id="btn-add-user">+ Tambah Akun Login</button>
+        <div class="form-group">
+          <label>Nama Lengkap Guru / Petugas</label>
+          <input type="text" id="new-acc-name" class="form-control" placeholder="Contoh: Ratna Sari Dewi, S.Pd" required />
+        </div>
+        <div class="form-group">
+          <label>Username Akun (Untuk Login)</label>
+          <input type="text" id="new-acc-username" class="form-control" placeholder="Contoh: bu_ratna atau piket4" required />
+          <small style="color:var(--color-text-muted);">Gunakan huruf kecil atau angka tanpa spasi.</small>
+        </div>
+        <div class="form-group">
+          <label>Kata Sandi / Password</label>
+          <input type="text" id="new-acc-password" class="form-control" placeholder="Masukkan password akun..." value="123" required />
+        </div>
+        <div class="form-group">
+          <label>Jadwal Hari Piket Guru</label>
+          <input type="text" id="new-acc-schedule" class="form-control" placeholder="Contoh: Senin & Kamis" value="Senin & Kamis" />
+        </div>
+        <div class="form-group">
+          <label>Peran / Hak Akses Akun</label>
+          <select id="new-acc-role" class="form-control">
+            <option value="piket">Guru Piket Harian (Admin Absensi Harian)</option>
+            <option value="superadmin">Superadmin (Pengaturan Penuh Sistem)</option>
+          </select>
+        </div>
+        <button type="button" class="btn btn-gold" id="btn-add-user" style="width:100%;padding:12px;font-weight:700;">+ Simpan Akun Login Baru</button>
       </div>
 
       <div>
-        <h4 style="color:var(--color-maroon);margin-bottom:12px;">Daftar Akun Guru Piket & Superadmin</h4>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+          <h4 style="color:var(--color-maroon);margin:0;">Daftar Akun Login Guru & Admin (${db.users.length} Akun)</h4>
+          <span style="font-size:0.8rem;color:var(--color-text-muted);">Sinkron ke Firebase & Lokal</span>
+        </div>
         <div class="table-responsive">
           <table class="data-table">
             <thead>
@@ -1865,7 +2166,7 @@ function renderSuperAkunTab() {
                 <th>Peran</th>
                 <th>Jadwal Piket</th>
                 <th>Password</th>
-                <th>Aksi</th>
+                <th style="width:120px;">Aksi</th>
               </tr>
             </thead>
             <tbody>
@@ -1875,10 +2176,12 @@ function renderSuperAkunTab() {
                   <td><strong>${escapeHtml(u.name)}</strong></td>
                   <td><span class="badge ${u.role === 'superadmin' ? 'badge-maroon' : 'badge-gold'}">${u.role === 'superadmin' ? 'Superadmin' : 'Guru Piket'}</span></td>
                   <td>${escapeHtml(u.jadwalPiket || '-')}</td>
-                  <td><code>${escapeHtml(u.password)}</code></td>
-                  <td style="display:flex;gap:6px;">
-                    <button type="button" class="btn btn-sm btn-outline" data-edit-user="${escapeHtml(u.id)}">Edit</button>
-                    ${u.username === 'superadmin' ? '' : `<button type="button" class="btn btn-sm" style="background:#FEE2E2;color:#B91C1C;" data-del-user="${escapeHtml(u.id)}">Hapus</button>`}
+                  <td><code style="background:var(--color-bg);padding:3px 6px;border-radius:4px;">${escapeHtml(u.password)}</code></td>
+                  <td>
+                    <div style="display:flex;gap:6px;">
+                      <button type="button" class="btn btn-sm btn-outline" data-open-edit-user="${escapeHtml(u.id)}">✏️ Edit</button>
+                      ${u.username === 'superadmin' ? '' : `<button type="button" class="btn btn-sm" style="background:#FEE2E2;color:#B91C1C;border-color:#FCA5A5;" data-del-user="${escapeHtml(u.id)}">🗑️ Hapus</button>`}
+                    </div>
                   </td>
                 </tr>
               `).join('')}
@@ -1890,9 +2193,270 @@ function renderSuperAkunTab() {
   `;
 }
 
-// ============================================================================
-// EVENT BINDINGS & ACTIONS
-// ============================================================================
+function renderModalDialog() {
+  if (!state.editModal) return '';
+
+  const { type, data } = state.editModal;
+
+  if (type === 'user') {
+    return `
+      <div class="modal-backdrop" id="modal-backdrop">
+        <div class="modal-card">
+          <div class="modal-header">
+            <h3>✏️ Edit Akun Login Guru / Petugas</h3>
+            <button type="button" class="modal-close" id="btn-close-modal">✕</button>
+          </div>
+          <div class="modal-body">
+            <form id="form-modal-edit-user">
+              <input type="hidden" id="edit-user-id" value="${escapeHtml(data.id)}" />
+              <div class="form-group">
+                <label>Nama Lengkap Guru / Petugas</label>
+                <input type="text" id="edit-user-name" class="form-control" value="${escapeHtml(data.name)}" required />
+              </div>
+              <div class="form-group">
+                <label>Username Akun</label>
+                <input type="text" id="edit-user-username" class="form-control" value="${escapeHtml(data.username)}" required />
+              </div>
+              <div class="form-group">
+                <label>Kata Sandi / Password Baru</label>
+                <input type="text" id="edit-user-password" class="form-control" value="${escapeHtml(data.password)}" required />
+              </div>
+              <div class="form-group">
+                <label>Jadwal Hari Piket</label>
+                <input type="text" id="edit-user-schedule" class="form-control" value="${escapeHtml(data.jadwalPiket || '')}" placeholder="Contoh: Senin & Kamis" />
+              </div>
+              <div class="form-group">
+                <label>Peran / Role</label>
+                <select id="edit-user-role" class="form-control">
+                  <option value="piket" ${data.role === 'piket' ? 'selected' : ''}>Guru Piket Harian</option>
+                  <option value="superadmin" ${data.role === 'superadmin' ? 'selected' : ''}>Superadmin</option>
+                </select>
+              </div>
+              <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:20px;">
+                <button type="button" class="btn btn-outline" id="btn-cancel-modal">Batal</button>
+                <button type="submit" class="btn btn-maroon">💾 Simpan Perubahan Akun</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  if (type === 'student') {
+    return `
+      <div class="modal-backdrop" id="modal-backdrop">
+        <div class="modal-card">
+          <div class="modal-header">
+            <h3>${data.isNew ? '➕ Tambah Data Siswa Baru' : '✏️ Edit Data Siswa'}</h3>
+            <button type="button" class="modal-close" id="btn-close-modal">✕</button>
+          </div>
+          <div class="modal-body">
+            <form id="form-modal-edit-student">
+              <input type="hidden" id="edit-stu-id" value="${escapeHtml(data.id || '')}" />
+              <input type="hidden" id="edit-stu-isnew" value="${data.isNew ? '1' : '0'}" />
+              <div class="form-group">
+                <label>NIS (Nomor Induk Siswa)</label>
+                <input type="text" id="edit-stu-nis" class="form-control" value="${escapeHtml(data.nis || '')}" placeholder="Contoh: 240701" required />
+              </div>
+              <div class="form-group">
+                <label>Nama Lengkap Siswa</label>
+                <input type="text" id="edit-stu-name" class="form-control" value="${escapeHtml(data.name || '')}" placeholder="Nama lengkap siswa..." required />
+              </div>
+              <div class="grid-2">
+                <div class="form-group">
+                  <label>Jenis Kelamin</label>
+                  <select id="edit-stu-gender" class="form-control">
+                    <option value="L" ${data.gender === 'L' ? 'selected' : ''}>Laki-laki (L)</option>
+                    <option value="P" ${data.gender === 'P' ? 'selected' : ''}>Perempuan (P)</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label>Rombel / Kelas</label>
+                  <select id="edit-stu-rombel" class="form-control">
+                    ${db.rombels.map(r => `<option value="${escapeHtml(r)}" ${data.rombel === r ? 'selected' : ''}>Kelas ${escapeHtml(r)}</option>`).join('')}
+                  </select>
+                </div>
+              </div>
+              <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:20px;">
+                <button type="button" class="btn btn-outline" id="btn-cancel-modal">Batal</button>
+                <button type="submit" class="btn btn-maroon">💾 Simpan Data Siswa</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  if (type === 'rombel') {
+    return `
+      <div class="modal-backdrop" id="modal-backdrop">
+        <div class="modal-card">
+          <div class="modal-header">
+            <h3>✏️ Edit / Ganti Nama Rombel</h3>
+            <button type="button" class="modal-close" id="btn-close-modal">✕</button>
+          </div>
+          <div class="modal-body">
+            <form id="form-modal-edit-rombel">
+              <input type="hidden" id="edit-old-rombel" value="${escapeHtml(data.oldName)}" />
+              <div class="form-group">
+                <label>Nama Rombel Saat Ini</label>
+                <input type="text" class="form-control" value="${escapeHtml(data.oldName)}" readonly style="background:var(--color-bg);" />
+              </div>
+              <div class="form-group">
+                <label>Nama Rombel Baru</label>
+                <input type="text" id="edit-new-rombel" class="form-control" value="${escapeHtml(data.oldName)}" required />
+                <small style="color:var(--color-text-muted);">Nama rombel semua siswa di kelas ini juga akan otomatis diperbarui.</small>
+              </div>
+              <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:20px;">
+                <button type="button" class="btn btn-outline" id="btn-cancel-modal">Batal</button>
+                <button type="submit" class="btn btn-maroon">💾 Perbarui Nama Rombel</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  return '';
+}
+
+function bindModalEvents() {
+  const backdrop = document.getElementById('modal-backdrop');
+  const closeBtn = document.getElementById('btn-close-modal');
+  const cancelBtn = document.getElementById('btn-cancel-modal');
+
+  const closeModal = () => {
+    state.editModal = null;
+    renderApp();
+  };
+
+  if (closeBtn) closeBtn.addEventListener('click', closeModal);
+  if (cancelBtn) cancelBtn.addEventListener('click', closeModal);
+  if (backdrop) {
+    backdrop.addEventListener('click', e => {
+      if (e.target === backdrop) closeModal();
+    });
+  }
+
+  const formEditUser = document.getElementById('form-modal-edit-user');
+  if (formEditUser) {
+    formEditUser.addEventListener('submit', e => {
+      e.preventDefault();
+      const id = document.getElementById('edit-user-id').value;
+      const usr = db.users.find(u => u.id === id);
+      if (!usr) return;
+
+      const newUsername = document.getElementById('edit-user-username').value.trim();
+      // Validasi duplikat username jika berubah
+      if (newUsername.toLowerCase() !== usr.username.toLowerCase()) {
+        if (db.users.some(u => u.id !== id && u.username.toLowerCase() === newUsername.toLowerCase())) {
+          showToast('Username tersebut sudah digunakan oleh akun lain!');
+          return;
+        }
+      }
+
+      usr.name = document.getElementById('edit-user-name').value.trim();
+      usr.username = newUsername;
+      usr.password = document.getElementById('edit-user-password').value.trim();
+      usr.jadwalPiket = document.getElementById('edit-user-schedule').value.trim();
+      usr.role = document.getElementById('edit-user-role').value;
+
+      saveDatabase();
+      showToast(`Akun @${usr.username} (${usr.name}) berhasil diperbarui!`);
+      closeModal();
+    });
+  }
+
+  const formEditStudent = document.getElementById('form-modal-edit-student');
+  if (formEditStudent) {
+    formEditStudent.addEventListener('submit', e => {
+      e.preventDefault();
+      const id = document.getElementById('edit-stu-id').value;
+      const isNew = document.getElementById('edit-stu-isnew').value === '1';
+      const nis = document.getElementById('edit-stu-nis').value.trim();
+      const name = document.getElementById('edit-stu-name').value.trim();
+      const gender = document.getElementById('edit-stu-gender').value;
+      const rombel = document.getElementById('edit-stu-rombel').value;
+
+      if (!nis || !name) {
+        showToast('Lengkapi NIS dan Nama Siswa!');
+        return;
+      }
+
+      if (isNew) {
+        // Cek duplikat NIS
+        if (db.students.some(s => s.nis === nis)) {
+          showToast('NIS tersebut sudah terdaftar untuk siswa lain!');
+          return;
+        }
+        db.students.push({
+          id: 'S' + Date.now(),
+          nis,
+          name,
+          gender,
+          rombel
+        });
+        showToast(`Siswa ${name} berhasil ditambahkan ke Rombel ${rombel}!`);
+      } else {
+        const stu = db.students.find(s => s.id === id);
+        if (!stu) return;
+        stu.nis = nis;
+        stu.name = name;
+        stu.gender = gender;
+        stu.rombel = rombel;
+        showToast(`Data siswa ${name} berhasil diperbarui!`);
+      }
+
+      saveDatabase();
+      closeModal();
+    });
+  }
+
+  const formEditRombel = document.getElementById('form-modal-edit-rombel');
+  if (formEditRombel) {
+    formEditRombel.addEventListener('submit', e => {
+      e.preventDefault();
+      const oldName = document.getElementById('edit-old-rombel').value.trim();
+      const newName = document.getElementById('edit-new-rombel').value.trim().toUpperCase();
+
+      if (!newName) {
+        showToast('Nama rombel tidak boleh kosong!');
+        return;
+      }
+
+      if (newName !== oldName && db.rombels.includes(newName)) {
+        showToast(`Rombel ${newName} sudah ada!`);
+        return;
+      }
+
+      // Update daftar rombel
+      const rIdx = db.rombels.indexOf(oldName);
+      if (rIdx !== -1) {
+        db.rombels[rIdx] = newName;
+      }
+
+      // Update semua siswa yang ada di rombel ini
+      let updatedCount = 0;
+      db.students.forEach(s => {
+        if (s.rombel === oldName) {
+          s.rombel = newName;
+          updatedCount++;
+        }
+      });
+
+      // Update state rombel jika sedang aktif
+      if (state.selectedRombel === oldName) state.selectedRombel = newName;
+      if (state.daftarRombel === oldName) state.daftarRombel = newName;
+
+      saveDatabase();
+      showToast(`Rombel berhasil diubah dari ${oldName} menjadi ${newName} (${updatedCount} siswa dipindahkan)!`);
+      closeModal();
+    });
+  }
+}
 function bindMainEvents() {
   // Navigasi Sidebar
   document.querySelectorAll('[data-nav]').forEach(btn => {
@@ -2022,6 +2586,66 @@ function bindMainEvents() {
       renderApp();
     });
   }
+
+  // --- DAFTAR SISWA PER ROMBEL EVENTS ---
+  document.querySelectorAll('[data-daftar-rombel]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      state.daftarRombel = btn.getAttribute('data-daftar-rombel');
+      renderApp();
+    });
+  });
+
+  const daftarRombelSelect = document.getElementById('daftar-rombel-select');
+  if (daftarRombelSelect) {
+    daftarRombelSelect.addEventListener('change', e => {
+      state.daftarRombel = e.target.value;
+      renderApp();
+    });
+  }
+
+  const daftarSearchInput = document.getElementById('daftar-search-input');
+  if (daftarSearchInput) {
+    daftarSearchInput.addEventListener('input', e => {
+      state.daftarSearch = e.target.value;
+      renderApp();
+      const input = document.getElementById('daftar-search-input');
+      if (input) {
+        input.focus();
+        input.setSelectionRange(input.value.length, input.value.length);
+      }
+    });
+  }
+
+  const quickAddStuModalBtn = document.getElementById('btn-quick-add-student-modal');
+  if (quickAddStuModalBtn) {
+    quickAddStuModalBtn.addEventListener('click', () => {
+      state.editModal = {
+        type: 'student',
+        data: {
+          isNew: true,
+          gender: 'L',
+          rombel: state.daftarRombel === 'ALL' ? db.rombels[0] || 'VII-A' : state.daftarRombel
+        }
+      };
+      renderApp();
+    });
+  }
+
+  document.querySelectorAll('[data-open-edit-student]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = btn.getAttribute('data-open-edit-student');
+      const stu = db.students.find(s => s.id === id);
+      if (!stu) return;
+      state.editModal = {
+        type: 'student',
+        data: {
+          isNew: false,
+          ...stu
+        }
+      };
+      renderApp();
+    });
+  });
 
   // --- ABSENSI GURU EVENTS ---
   const tchDate = document.getElementById('tch-date-picker');
@@ -2233,12 +2857,36 @@ function bindMainEvents() {
         showToast('File harus berupa gambar (PNG, JPG, SVG, dsb)!');
         return;
       }
+      // Kompres / Resize gambar logo otomatis agar ukuran ringan & hemat kuota (< 80KB)
       const reader = new FileReader();
       reader.onload = function(evt) {
-        db.settings.schoolLogo = evt.target.result;
-        saveDatabase();
-        showToast('Logo sekolah berhasil diperbarui dari file gambar!');
-        renderApp();
+        const img = new Image();
+        img.onload = function() {
+          const canvas = document.createElement('canvas');
+          const maxDim = 200; // Ukuran logo proporsional 200px
+          let w = img.width;
+          let h = img.height;
+          if (w > h) {
+            if (w > maxDim) {
+              h = Math.round((h * maxDim) / w);
+              w = maxDim;
+            }
+          } else {
+            if (h > maxDim) {
+              w = Math.round((w * maxDim) / h);
+              h = maxDim;
+            }
+          }
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, w, h);
+          db.settings.schoolLogo = canvas.toDataURL('image/png', 0.85);
+          saveDatabase();
+          showToast('Logo sekolah berhasil dikompres & disimpan!');
+          renderApp();
+        };
+        img.src = evt.target.result;
       };
       reader.readAsDataURL(file);
     });
@@ -2378,15 +3026,50 @@ function bindMainEvents() {
     });
   }
 
-  document.querySelectorAll('[data-del-rombel]').forEach(btn => {
+  document.querySelectorAll('[data-open-edit-rombel]').forEach(btn => {
     btn.addEventListener('click', () => {
-      const r = btn.getAttribute('data-del-rombel');
-      db.rombels = db.rombels.filter(x => x !== r);
-      saveDatabase();
-      showToast(`Rombel ${r} dihapus.`);
+      const r = btn.getAttribute('data-open-edit-rombel');
+      state.editModal = {
+        type: 'rombel',
+        data: { oldName: r }
+      };
       renderApp();
     });
   });
+
+  document.querySelectorAll('[data-del-rombel]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const r = btn.getAttribute('data-del-rombel');
+      const count = db.students.filter(s => s.rombel === r).length;
+      if (confirm(`Yakin ingin menghapus rombel ${r}? ${count > 0 ? `PERINGATAN: Ada ${count} siswa di rombel ini!` : ''}`)) {
+        db.rombels = db.rombels.filter(x => x !== r);
+        saveDatabase();
+        showToast(`Rombel ${r} dihapus.`);
+        renderApp();
+      }
+    });
+  });
+
+  const superSiswaRombelSel = document.getElementById('super-siswa-filter-rombel');
+  if (superSiswaRombelSel) {
+    superSiswaRombelSel.addEventListener('change', e => {
+      state.superadminSiswaRombel = e.target.value;
+      renderApp();
+    });
+  }
+
+  const superSiswaSearchInput = document.getElementById('super-siswa-search');
+  if (superSiswaSearchInput) {
+    superSiswaSearchInput.addEventListener('input', e => {
+      state.superadminSiswaSearch = e.target.value;
+      renderApp();
+      const input = document.getElementById('super-siswa-search');
+      if (input) {
+        input.focus();
+        input.setSelectionRange(input.value.length, input.value.length);
+      }
+    });
+  }
 
   const addStuBtn = document.getElementById('btn-add-student');
   if (addStuBtn) {
@@ -2396,6 +3079,9 @@ function bindMainEvents() {
       const gender = document.getElementById('new-stu-gender').value;
       const rombel = document.getElementById('new-stu-rombel').value;
       if (!nis || !name) return showToast('Lengkapi NIS dan Nama Siswa!');
+      if (db.students.some(s => s.nis === nis)) {
+        return showToast('NIS sudah digunakan oleh siswa lain!');
+      }
       db.students.push({
         id: 'S' + Date.now(),
         nis,
@@ -2409,23 +3095,17 @@ function bindMainEvents() {
     });
   }
 
-  document.querySelectorAll('[data-edit-student]').forEach(btn => {
+  document.querySelectorAll('[data-del-student]').forEach(btn => {
     btn.addEventListener('click', () => {
-      const id = btn.getAttribute('data-edit-student');
-      const stu = db.students.find(s => s.id === id);
-      if (!stu) return;
-      const newName = prompt('Edit Nama Lengkap Siswa:', stu.name);
-      if (newName === null) return;
-      const newNis = prompt('Edit NIS Siswa:', stu.nis);
-      if (newNis === null) return;
-      const newRombel = prompt(`Edit Rombel Siswa (${db.rombels.join(', ')}):`, stu.rombel);
-      if (newRombel === null) return;
-      stu.name = newName.trim() || stu.name;
-      stu.nis = newNis.trim() || stu.nis;
-      stu.rombel = newRombel.trim().toUpperCase() || stu.rombel;
-      saveDatabase();
-      showToast(`Data siswa ${stu.name} berhasil diperbarui!`);
-      renderApp();
+      const id = btn.getAttribute('data-del-student');
+      const s = db.students.find(x => x.id === id);
+      if (!s) return;
+      if (confirm(`Yakin ingin menghapus data siswa ${s.name} (NIS: ${s.nis})?`)) {
+        db.students = db.students.filter(x => x.id !== id);
+        saveDatabase();
+        showToast('Data siswa berhasil dihapus.');
+        renderApp();
+      }
     });
   });
 
@@ -2490,17 +3170,36 @@ function bindMainEvents() {
   });
 
   // Kelola Akun Login
+  const selectTeacherAcc = document.getElementById('select-teacher-for-acc');
+  if (selectTeacherAcc) {
+    selectTeacherAcc.addEventListener('change', e => {
+      const selectedName = e.target.value;
+      if (!selectedName) return;
+      document.getElementById('new-acc-name').value = selectedName;
+      // Generate saran username
+      const firstWord = selectedName.split(' ')[0].toLowerCase().replace(/[^a-z0-9]/g, '');
+      const candidateUser = firstWord || 'guru';
+      let finalUser = candidateUser;
+      let counter = 1;
+      while (db.users.some(u => u.username.toLowerCase() === finalUser.toLowerCase())) {
+        finalUser = `${candidateUser}${counter}`;
+        counter++;
+      }
+      document.getElementById('new-acc-username').value = finalUser;
+    });
+  }
+
   const addUserBtn = document.getElementById('btn-add-user');
   if (addUserBtn) {
     addUserBtn.addEventListener('click', () => {
       const name = document.getElementById('new-acc-name').value.trim();
-      const username = document.getElementById('new-acc-username').value.trim();
+      const username = document.getElementById('new-acc-username').value.trim().toLowerCase();
       const password = document.getElementById('new-acc-password').value.trim();
       const jadwalPiket = document.getElementById('new-acc-schedule').value.trim();
       const role = document.getElementById('new-acc-role').value;
       if (!name || !username || !password) return showToast('Lengkapi nama, username, dan password!');
       if (db.users.some(u => u.username.toLowerCase() === username.toLowerCase())) {
-        return showToast('Username sudah digunakan!');
+        return showToast('Username sudah digunakan! Gunakan username lain.');
       }
       db.users.push({
         id: 'U' + Date.now(),
@@ -2511,27 +3210,20 @@ function bindMainEvents() {
         jadwalPiket: jadwalPiket || 'Guru Piket Harian'
       });
       saveDatabase();
-      showToast(`Akun @${username} (${name}) berhasil dibuat!`);
+      showToast(`Akun login @${username} untuk ${name} berhasil dibuat!`);
       renderApp();
     });
   }
 
-  document.querySelectorAll('[data-edit-user]').forEach(btn => {
+  document.querySelectorAll('[data-open-edit-user]').forEach(btn => {
     btn.addEventListener('click', () => {
-      const id = btn.getAttribute('data-edit-user');
+      const id = btn.getAttribute('data-open-edit-user');
       const usr = db.users.find(u => u.id === id);
       if (!usr) return;
-      const newName = prompt('Edit Nama Petugas / Admin:', usr.name);
-      if (newName === null) return;
-      const newPass = prompt('Edit Password Login:', usr.password);
-      if (newPass === null) return;
-      const newSchedule = prompt('Edit Jadwal Piket:', usr.jadwalPiket || '');
-      if (newSchedule === null) return;
-      usr.name = newName.trim() || usr.name;
-      usr.password = newPass.trim() || usr.password;
-      usr.jadwalPiket = newSchedule.trim() || usr.jadwalPiket;
-      saveDatabase();
-      showToast(`Akun @${usr.username} berhasil diperbarui!`);
+      state.editModal = {
+        type: 'user',
+        data: { ...usr }
+      };
       renderApp();
     });
   });
@@ -2539,10 +3231,18 @@ function bindMainEvents() {
   document.querySelectorAll('[data-del-user]').forEach(btn => {
     btn.addEventListener('click', () => {
       const id = btn.getAttribute('data-del-user');
-      db.users = db.users.filter(u => u.id !== id);
-      saveDatabase();
-      showToast('Akun pengguna dihapus.');
-      renderApp();
+      const usr = db.users.find(u => u.id === id);
+      if (!usr) return;
+      if (usr.username === 'superadmin') {
+        showToast('Akun superadmin utama tidak boleh dihapus!');
+        return;
+      }
+      if (confirm(`Yakin ingin menghapus akun login @${usr.username} (${usr.name})?`)) {
+        db.users = db.users.filter(u => u.id !== id);
+        saveDatabase();
+        showToast(`Akun @${usr.username} berhasil dihapus.`);
+        renderApp();
+      }
     });
   });
 }
@@ -2796,6 +3496,7 @@ function escapeHtml(str) {
 document.addEventListener('DOMContentLoaded', () => {
   renderApp();
   initFirebaseSync();
+  initIdleTimer();
 });
 
 // Listener saat Firebase siap
@@ -2803,27 +3504,88 @@ window.addEventListener('firebase-ready', () => {
   initFirebaseSync();
 });
 
+// ============================================================================
+// AUTO-LOGOUT SISTEM JIKA IDLE (TIDAK ADA AKTIVITAS > 15 MENIT)
+// ============================================================================
+let idleTimer = null;
+let lastUserActivityTime = Date.now();
+
+function updateLastActivity() {
+  lastUserActivityTime = Date.now();
+  if (state.currentUser) {
+    try {
+      const raw = localStorage.getItem(SESSION_KEY);
+      if (raw) {
+        const sObj = JSON.parse(raw);
+        sObj.lastActive = lastUserActivityTime;
+        localStorage.setItem(SESSION_KEY, JSON.stringify(sObj));
+      }
+    } catch (_) {}
+  }
+}
+
+function initIdleTimer() {
+  // Rekam aktivitas user: pergerakan mouse, klik, ketik keyboard, scroll layar, dan sentuhan layar
+  const activityEvents = ['mousedown', 'mousemove', 'keydown', 'scroll', 'touchstart', 'click'];
+  activityEvents.forEach(evt => {
+    window.addEventListener(evt, () => {
+      updateLastActivity();
+    }, { passive: true });
+  });
+
+  // Periksa timer idle setiap 10 detik
+  if (idleTimer) clearInterval(idleTimer);
+  idleTimer = setInterval(() => {
+    if (!state.currentUser) return;
+
+    const idleElapsed = Date.now() - lastUserActivityTime;
+    if (idleElapsed >= IDLE_TIMEOUT_MS) {
+      handleLogout(true);
+    }
+  }, 10000);
+}
+
 function initFirebaseSync() {
   if (!window.FirebaseBridge || typeof window.FirebaseBridge.listenToCloud !== 'function') return;
 
   // Coba ambil data pertama kali dari cloud jika ada
   window.FirebaseBridge.loadFromCloud().then(cloudData => {
     if (cloudData && cloudData.users && cloudData.settings) {
+      // Jalankan auto-cleanup pada data cloud sebelum diterapkan
+      const cleanupCloud = cleanupExpiredData(cloudData);
       db = cloudData;
-      saveDatabase(false);
+      // Jika ada data kadaluarsa yang dibersihkan di cloud, simpan versi bersih kembali ke Firebase
+      if (cleanupCloud.piketRemoved > 0 || cleanupCloud.attendanceRemoved > 0) {
+        saveDatabase(true);
+      } else {
+        saveDatabase(false);
+      }
+      // Sinkronkan ulang data currentUser dengan data user terbaru dari cloud
+      if (state.currentUser) {
+        const refreshedUser = db.users.find(u => u.username.toLowerCase() === state.currentUser.username.toLowerCase());
+        if (refreshedUser) state.currentUser = refreshedUser;
+      }
       renderApp();
-      console.log('Firebase Cloud Database loaded successfully.');
+      console.log('Firebase Cloud Database loaded & verified successfully.');
     } else {
-      // Jika di cloud masih kosong, unggah data awal
-      window.FirebaseBridge.saveToCloud(db).catch(console.warn);
+      // Jika di cloud masih kosong, langsung unggah data awal
+      cleanupExpiredData(db);
+      window.FirebaseBridge.saveToCloud(db).then(() => {
+        console.log('Data awal berhasil diunggah ke Firebase Firestore.');
+      }).catch(err => {
+        console.warn('Gagal unggah data awal ke Firebase. Periksa Security Rules Firestore:', err);
+      });
     }
   }).catch(err => {
     console.warn('Firebase initial load note:', err);
+    // Jika load gagal (misal dokumen belum ada), coba unggah data lokal
+    window.FirebaseBridge.saveToCloud(db).catch(console.warn);
   });
 
   // Pasang listener real-time
   window.FirebaseBridge.listenToCloud(cloudData => {
     if (cloudData && cloudData.users && cloudData.settings) {
+      cleanupExpiredData(cloudData);
       db = cloudData;
       saveDatabase(false);
       renderApp();

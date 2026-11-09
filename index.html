@@ -51,42 +51,124 @@
       fbStatus = 'error';
     }
 
-    // Expose bridge helper to global window
+    // Expose bridge helper to global window (Masing-masing data tersimpan di dokumen terpisah)
     window.FirebaseBridge = {
       app: fbApp,
       db: fbDb,
       analytics: fbAnalytics,
       status: fbStatus,
-      docRef: fbDb ? doc(fbDb, "absensi_dyah_pithaloka", "main_database") : null,
+
       async saveToCloud(data) {
         if (!this.db) throw new Error('Firebase DB tidak terhubung');
-        const ref = doc(this.db, "absensi_dyah_pithaloka", "main_database");
-        await setDoc(ref, {
-          data: JSON.stringify(data),
+
+        // Masing-masing data disimpan ke dokumen terpisah secara modular di Firestore
+        const set1 = setDoc(doc(this.db, "absensi_dyah_pithaloka", "data_siswa"), {
+          students: data.students || [],
+          total: (data.students || []).length,
           lastUpdated: new Date().toISOString()
         }, { merge: true });
+
+        const set2 = setDoc(doc(this.db, "absensi_dyah_pithaloka", "data_guru"), {
+          teachers: data.teachers || [],
+          total: (data.teachers || []).length,
+          lastUpdated: new Date().toISOString()
+        }, { merge: true });
+
+        const set3 = setDoc(doc(this.db, "absensi_dyah_pithaloka", "akun_login"), {
+          users: data.users || [],
+          total: (data.users || []).length,
+          lastUpdated: new Date().toISOString()
+        }, { merge: true });
+
+        const set4 = setDoc(doc(this.db, "absensi_dyah_pithaloka", "data_rombel"), {
+          rombels: data.rombels || [],
+          total: (data.rombels || []).length,
+          lastUpdated: new Date().toISOString()
+        }, { merge: true });
+
+        const set5 = setDoc(doc(this.db, "absensi_dyah_pithaloka", "pengaturan_sekolah"), {
+          settings: data.settings || {},
+          lastUpdated: new Date().toISOString()
+        }, { merge: true });
+
+        const set6 = setDoc(doc(this.db, "absensi_dyah_pithaloka", "catatan_absensi"), {
+          studentAttendance: data.studentAttendance || {},
+          teacherAttendance: data.teacherAttendance || {},
+          piketLogs: data.piketLogs || {},
+          lastUpdated: new Date().toISOString()
+        }, { merge: true });
+
+        await Promise.all([set1, set2, set3, set4, set5, set6]);
+
         this.status = 'connected';
+        console.log('Berhasil menyimpan masing-masing data ke dokumen Firebase terpisah (data_siswa, data_guru, akun_login, data_rombel, pengaturan_sekolah, catatan_absensi).');
       },
+
       async loadFromCloud() {
         if (!this.db) throw new Error('Firebase DB tidak terhubung');
-        const ref = doc(this.db, "absensi_dyah_pithaloka", "main_database");
-        const snap = await getDoc(ref);
-        if (snap.exists() && snap.data() && snap.data().data) {
-          return JSON.parse(snap.data().data);
+
+        const [siswaSnap, guruSnap, akunSnap, rombelSnap, setSnap, absensiSnap] = await Promise.all([
+          getDoc(doc(this.db, "absensi_dyah_pithaloka", "data_siswa")),
+          getDoc(doc(this.db, "absensi_dyah_pithaloka", "data_guru")),
+          getDoc(doc(this.db, "absensi_dyah_pithaloka", "akun_login")),
+          getDoc(doc(this.db, "absensi_dyah_pithaloka", "data_rombel")),
+          getDoc(doc(this.db, "absensi_dyah_pithaloka", "pengaturan_sekolah")),
+          getDoc(doc(this.db, "absensi_dyah_pithaloka", "catatan_absensi"))
+        ]);
+
+        if (siswaSnap.exists() || guruSnap.exists() || akunSnap.exists() || setSnap.exists()) {
+          const sData = siswaSnap.exists() ? siswaSnap.data() : {};
+          const gData = guruSnap.exists() ? guruSnap.data() : {};
+          const uData = akunSnap.exists() ? akunSnap.data() : {};
+          const rData = rombelSnap.exists() ? rombelSnap.data() : {};
+          const cfgData = setSnap.exists() ? setSnap.data() : {};
+          const aData = absensiSnap.exists() ? absensiSnap.data() : {};
+
+          return {
+            students: sData.students || [],
+            teachers: gData.teachers || [],
+            users: uData.users || [],
+            rombels: rData.rombels || [],
+            settings: cfgData.settings || {},
+            studentAttendance: aData.studentAttendance || {},
+            teacherAttendance: aData.teacherAttendance || {},
+            piketLogs: aData.piketLogs || {}
+          };
         }
+
+        // Cek fallback legacy master_data jika pernah disimpan sebelumnya
+        const masterSnap = await getDoc(doc(this.db, "absensi_dyah_pithaloka", "master_data"));
+        if (masterSnap.exists()) {
+          const mData = masterSnap.data();
+          const attSnap = await getDoc(doc(this.db, "absensi_dyah_pithaloka", "attendance_data"));
+          const aData = attSnap.exists() ? attSnap.data() : {};
+          return {
+            settings: mData.settings || {},
+            rombels: mData.rombels || [],
+            users: mData.users || [],
+            students: mData.students || [],
+            teachers: mData.teachers || [],
+            studentAttendance: aData.studentAttendance || {},
+            teacherAttendance: aData.teacherAttendance || {},
+            piketLogs: aData.piketLogs || {}
+          };
+        }
+
         return null;
       },
+
       listenToCloud(onUpdate) {
         if (!this.db) return () => {};
-        const ref = doc(this.db, "absensi_dyah_pithaloka", "main_database");
-        return onSnapshot(ref, (snap) => {
+        // Dengarkan dokumen akun login & absensi untuk sinkronisasi real-time
+        const akunRef = doc(this.db, "absensi_dyah_pithaloka", "akun_login");
+        return onSnapshot(akunRef, async (snap) => {
           this.status = 'connected';
-          if (snap.exists() && snap.data() && snap.data().data) {
+          if (snap.exists()) {
             try {
-              const cloudDb = JSON.parse(snap.data().data);
-              onUpdate(cloudDb);
+              const fullData = await this.loadFromCloud();
+              if (fullData) onUpdate(fullData);
             } catch (err) {
-              console.error('Error parsing cloud update:', err);
+              console.error('Error in real-time cloud listener:', err);
             }
           }
         }, (err) => {
