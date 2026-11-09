@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sistem Absensi Guru & Siswa - SMP Dyah Pithaloka</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app"></div>
+  <div id="toast-root" class="toast-container"></div>
+
+  <!-- Firebase App SDK & Firestore (Modular via CDN) -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+    import { getAnalytics } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-analytics.js";
+    import {
+      getFirestore,
+      doc,
+      setDoc,
+      getDoc,
+      onSnapshot
+    } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyAk4fah9F4MJ1lv-sXci3HfiOfxjfWSrJM",
+      authDomain: "absensi-guru-dan-murid.firebaseapp.com",
+      projectId: "absensi-guru-dan-murid",
+      storageBucket: "absensi-guru-dan-murid.firebasestorage.app",
+      messagingSenderId: "1045221747993",
+      appId: "1:1045221747993:web:4d7d752230380e0af56988",
+      measurementId: "G-VG3RDQK7VK"
+    };
+
+    let fbApp = null;
+    let fbAnalytics = null;
+    let fbDb = null;
+    let fbStatus = 'initializing'; // 'connected' | 'offline' | 'error'
+
+    try {
+      fbApp = initializeApp(firebaseConfig);
+      fbDb = getFirestore(fbApp);
+      try { fbAnalytics = getAnalytics(fbApp); } catch (_) {}
+      fbStatus = 'connected';
+      console.log('Firebase initialized successfully.');
+    } catch (e) {
+      console.error('Firebase initialization error:', e);
+      fbStatus = 'error';
+    }
+
+    // Expose bridge helper to global window
+    window.FirebaseBridge = {
+      app: fbApp,
+      db: fbDb,
+      analytics: fbAnalytics,
+      status: fbStatus,
+      docRef: fbDb ? doc(fbDb, "absensi_dyah_pithaloka", "main_database") : null,
+      async saveToCloud(data) {
+        if (!this.db) throw new Error('Firebase DB tidak terhubung');
+        const ref = doc(this.db, "absensi_dyah_pithaloka", "main_database");
+        await setDoc(ref, {
+          data: JSON.stringify(data),
+          lastUpdated: new Date().toISOString()
+        }, { merge: true });
+        this.status = 'connected';
+      },
+      async loadFromCloud() {
+        if (!this.db) throw new Error('Firebase DB tidak terhubung');
+        const ref = doc(this.db, "absensi_dyah_pithaloka", "main_database");
+        const snap = await getDoc(ref);
+        if (snap.exists() && snap.data() && snap.data().data) {
+          return JSON.parse(snap.data().data);
+        }
+        return null;
+      },
+      listenToCloud(onUpdate) {
+        if (!this.db) return () => {};
+        const ref = doc(this.db, "absensi_dyah_pithaloka", "main_database");
+        return onSnapshot(ref, (snap) => {
+          this.status = 'connected';
+          if (snap.exists() && snap.data() && snap.data().data) {
+            try {
+              const cloudDb = JSON.parse(snap.data().data);
+              onUpdate(cloudDb);
+            } catch (err) {
+              console.error('Error parsing cloud update:', err);
+            }
+          }
+        }, (err) => {
+          console.warn('Firebase sync listener notice:', err);
+          this.status = 'offline';
+        });
+      }
+    };
+
+    // Dispatch event that Firebase is ready
+    window.dispatchEvent(new CustomEvent('firebase-ready'));
+  </script>
+
+  <script src="app.js"></script>
+</body>
+</html>
+
