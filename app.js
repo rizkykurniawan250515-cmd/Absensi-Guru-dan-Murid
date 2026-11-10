@@ -346,10 +346,10 @@ let state = {
   rekapWeekStart: addDaysISO(getTodayISO(), -6),
   rekapWeekEnd: getTodayISO(),
   rekapMonth: getTodayISO().slice(0, 7),
-  superadminTab: 'tema', // 'tema' | 'keterangan' | 'firebase' | 'spreadsheet' | 'master-siswa' | 'master-guru' | 'master-akun'
+  superadminTab: 'master-siswa', // 'master-siswa' | 'master-guru' | 'master-akun' | 'keterangan' | 'firebase' | 'spreadsheet' | 'tema'
   superadminSiswaRombel: 'ALL',
   superadminSiswaSearch: '',
-  editModal: null // { type: 'student'|'teacher'|'user'|'rombel', data: {...} }
+  editModal: null // { type: 'student'|'teacher'|'user'|'rombel', data: object }
 };
 
 function loadDatabase() {
@@ -1108,7 +1108,6 @@ function renderDaftarSiswaView() {
           <p>${escapeHtml(db.settings.schoolName)} — Tahun Ajaran ${escapeHtml(db.settings.academicYear)} (${escapeHtml(db.settings.semester)})</p>
         </div>
         <div style="display:flex;gap:8px;">
-          ${isSuper ? `<button type="button" class="btn btn-gold btn-sm" id="btn-quick-add-student-modal">+ Tambah Siswa Baru</button>` : ''}
           <button type="button" class="btn btn-black btn-sm" onclick="window.print()">🖨️ Cetak Daftar</button>
         </div>
       </div>
@@ -1176,7 +1175,7 @@ function renderDaftarSiswaView() {
                   ${isSuper ? `
                     <td>
                       <div style="display:flex;gap:6px;">
-                        <button type="button" class="btn btn-sm btn-outline" data-open-edit-student="${escapeHtml(s.id)}">✏️ Edit</button>
+                        <button type="button" class="btn btn-sm btn-outline" data-open-edit-student="${escapeHtml(s.id)}" title="Edit Data Siswa">✏️ Edit</button>
                         <button type="button" class="btn btn-sm" style="background:#FEE2E2;color:#B91C1C;border-color:#FCA5A5;" data-del-student="${escapeHtml(s.id)}">🗑️</button>
                       </div>
                     </td>
@@ -1605,6 +1604,13 @@ function renderPiketLogView() {
 }
 
 // ============================================================================
+// 6. FORM EDIT KESELURUHAN DATA MASTER (DEPRECATED - KINI INLINE ROW EDIT)
+// ============================================================================
+function renderMasterAllInOneEditView(isInsideSuperadmin = false) {
+  return '';
+}
+
+// ============================================================================
 // 6. SUPERADMIN PANEL (TEMA, EDIT SEMUA KETERANGAN, SPREADSHEET, MASTER DATA)
 // ============================================================================
 function renderSuperadminView() {
@@ -1616,28 +1622,28 @@ function renderSuperadminView() {
       <div class="panel-header">
         <div>
           <h3>⚙️ Panel Kontrol Superadmin — ${escapeHtml(s.schoolName)}</h3>
-          <p>Hak akses penuh: Ubah tema warna, edit seluruh keterangan sistem, kelola rombel/siswa/guru/akun piket, dan tautkan Google Spreadsheet</p>
+          <p>Hak akses penuh: Kelola rombel, data siswa, dewan guru, akun login guru piket, tema, dan database Firebase Cloud</p>
         </div>
       </div>
 
       <div class="panel-body">
         <div class="subtabs">
-          <button type="button" class="subtab-btn ${tab === 'tema' ? 'active' : ''}" data-super-tab="tema">🎨 Ubah Tema & Warna</button>
-          <button type="button" class="subtab-btn ${tab === 'keterangan' ? 'active' : ''}" data-super-tab="keterangan">✏️ Edit Semua Keterangan Sistem</button>
-          <button type="button" class="subtab-btn ${tab === 'firebase' ? 'active' : ''}" data-super-tab="firebase">🔥 Database Firebase Cloud</button>
-          <button type="button" class="subtab-btn ${tab === 'spreadsheet' ? 'active' : ''}" data-super-tab="spreadsheet">🟢 Tautkan Link Spreadsheet</button>
           <button type="button" class="subtab-btn ${tab === 'master-siswa' ? 'active' : ''}" data-super-tab="master-siswa">🎓 Kelola Rombel & Siswa</button>
           <button type="button" class="subtab-btn ${tab === 'master-guru' ? 'active' : ''}" data-super-tab="master-guru">👨‍🏫 Kelola Data Guru</button>
           <button type="button" class="subtab-btn ${tab === 'master-akun' ? 'active' : ''}" data-super-tab="master-akun">🔐 Kelola Akun Guru Piket</button>
+          <button type="button" class="subtab-btn ${tab === 'keterangan' ? 'active' : ''}" data-super-tab="keterangan">✏️ Keterangan & Identitas Sekolah</button>
+          <button type="button" class="subtab-btn ${tab === 'firebase' ? 'active' : ''}" data-super-tab="firebase">🔥 Database Firebase Cloud</button>
+          <button type="button" class="subtab-btn ${tab === 'spreadsheet' ? 'active' : ''}" data-super-tab="spreadsheet">🟢 Tautkan Link Spreadsheet</button>
+          <button type="button" class="subtab-btn ${tab === 'tema' ? 'active' : ''}" data-super-tab="tema">🎨 Ubah Tema & Warna</button>
         </div>
 
-        ${tab === 'tema' ? renderSuperThemeTab() : ''}
-        ${tab === 'keterangan' ? renderSuperKeteranganTab() : ''}
-        ${tab === 'firebase' ? renderSuperFirebaseTab() : ''}
-        ${tab === 'spreadsheet' ? renderSuperSpreadsheetTab() : ''}
         ${tab === 'master-siswa' ? renderSuperSiswaTab() : ''}
         ${tab === 'master-guru' ? renderSuperGuruTab() : ''}
         ${tab === 'master-akun' ? renderSuperAkunTab() : ''}
+        ${tab === 'keterangan' ? renderSuperKeteranganTab() : ''}
+        ${tab === 'firebase' ? renderSuperFirebaseTab() : ''}
+        ${tab === 'spreadsheet' ? renderSuperSpreadsheetTab() : ''}
+        ${tab === 'tema' ? renderSuperThemeTab() : ''}
       </div>
     </div>
   `;
@@ -1975,7 +1981,7 @@ function renderSuperSiswaTab() {
             return `
               <div class="rombel-chip" style="display:inline-flex;align-items:center;gap:8px;padding:6px 12px;">
                 <span><strong>Kelas ${escapeHtml(r)}</strong> (${count} siswa)</span>
-                <button type="button" class="btn btn-sm btn-outline" style="padding:2px 6px;font-size:0.75rem;" data-open-edit-rombel="${escapeHtml(r)}" title="Edit / Ganti Nama Rombel">✏️</button>
+                <button type="button" class="btn btn-sm btn-outline" style="padding:2px 6px;font-size:0.75rem;" data-open-edit-rombel="${escapeHtml(r)}" title="Edit / Ganti Nama Rombel">✏️ Edit</button>
                 <button type="button" class="btn btn-sm" style="padding:2px 6px;font-size:0.75rem;background:#FEE2E2;color:#B91C1C;border-color:#FCA5A5;" data-del-rombel="${escapeHtml(r)}" title="Hapus Rombel">🗑️</button>
               </div>
             `;
@@ -2047,7 +2053,7 @@ function renderSuperSiswaTab() {
                   <td><span class="badge badge-gold">Kelas ${escapeHtml(s.rombel)}</span></td>
                   <td>
                     <div style="display:flex;gap:6px;">
-                      <button type="button" class="btn btn-sm btn-outline" data-open-edit-student="${escapeHtml(s.id)}">✏️</button>
+                      <button type="button" class="btn btn-sm btn-outline" data-open-edit-student="${escapeHtml(s.id)}" title="Edit Data Siswa">✏️ Edit</button>
                       <button type="button" class="btn btn-sm" style="background:#FEE2E2;color:#B91C1C;border-color:#FCA5A5;" data-del-student="${escapeHtml(s.id)}">🗑️</button>
                     </div>
                   </td>
@@ -2100,7 +2106,7 @@ function renderSuperGuruTab() {
                   <td><strong>${escapeHtml(t.name)}</strong></td>
                   <td>${escapeHtml(t.subject)}</td>
                   <td style="display:flex;gap:6px;">
-                    <button type="button" class="btn btn-sm btn-outline" data-edit-teacher="${escapeHtml(t.id)}">Edit</button>
+                    <button type="button" class="btn btn-sm btn-outline" data-open-edit-teacher="${escapeHtml(t.id)}" title="Edit Data Guru">✏️ Edit</button>
                     <button type="button" class="btn btn-sm" style="background:#FEE2E2;color:#B91C1C;" data-del-teacher="${escapeHtml(t.id)}">Hapus</button>
                   </td>
                 </tr>
@@ -2179,7 +2185,7 @@ function renderSuperAkunTab() {
                   <td><code style="background:var(--color-bg);padding:3px 6px;border-radius:4px;">${escapeHtml(u.password)}</code></td>
                   <td>
                     <div style="display:flex;gap:6px;">
-                      <button type="button" class="btn btn-sm btn-outline" data-open-edit-user="${escapeHtml(u.id)}">✏️ Edit</button>
+                      <button type="button" class="btn btn-sm btn-outline" data-open-edit-user="${escapeHtml(u.id)}" title="Edit Data Akun">✏️ Edit</button>
                       ${u.username === 'superadmin' ? '' : `<button type="button" class="btn btn-sm" style="background:#FEE2E2;color:#B91C1C;border-color:#FCA5A5;" data-del-user="${escapeHtml(u.id)}">🗑️ Hapus</button>`}
                     </div>
                   </td>
@@ -2289,6 +2295,40 @@ function renderModalDialog() {
     `;
   }
 
+  if (type === 'teacher') {
+    return `
+      <div class="modal-backdrop" id="modal-backdrop">
+        <div class="modal-card">
+          <div class="modal-header">
+            <h3>✏️ Edit Data Dewan Guru & Staf</h3>
+            <button type="button" class="modal-close" id="btn-close-modal">✕</button>
+          </div>
+          <div class="modal-body">
+            <form id="form-modal-edit-teacher">
+              <input type="hidden" id="edit-tch-id" value="${escapeHtml(data.id)}" />
+              <div class="form-group">
+                <label>Nomor Induk Pegawai (NIP)</label>
+                <input type="text" id="edit-tch-nip" class="form-control" value="${escapeHtml(data.nip || '')}" placeholder="Contoh: 19800512 200501 1 004" />
+              </div>
+              <div class="form-group">
+                <label>Nama Lengkap Guru & Gelar</label>
+                <input type="text" id="edit-tch-name" class="form-control" value="${escapeHtml(data.name || '')}" placeholder="Nama lengkap guru..." required />
+              </div>
+              <div class="form-group">
+                <label>Mata Pelajaran / Tugas / Jabatan</label>
+                <input type="text" id="edit-tch-subject" class="form-control" value="${escapeHtml(data.subject || '')}" placeholder="Contoh: Matematika / Wali Kelas" />
+              </div>
+              <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:20px;">
+                <button type="button" class="btn btn-outline" id="btn-cancel-modal">Batal</button>
+                <button type="submit" class="btn btn-maroon">💾 Simpan Data Guru</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
   if (type === 'rombel') {
     return `
       <div class="modal-backdrop" id="modal-backdrop">
@@ -2364,7 +2404,7 @@ function bindModalEvents() {
       usr.jadwalPiket = document.getElementById('edit-user-schedule').value.trim();
       usr.role = document.getElementById('edit-user-role').value;
 
-      saveDatabase();
+      saveDatabase(true);
       showToast(`Akun @${usr.username} (${usr.name}) berhasil diperbarui!`);
       closeModal();
     });
@@ -2410,7 +2450,31 @@ function bindModalEvents() {
         showToast(`Data siswa ${name} berhasil diperbarui!`);
       }
 
-      saveDatabase();
+      saveDatabase(true);
+      closeModal();
+    });
+  }
+
+  const formEditTeacher = document.getElementById('form-modal-edit-teacher');
+  if (formEditTeacher) {
+    formEditTeacher.addEventListener('submit', e => {
+      e.preventDefault();
+      const id = document.getElementById('edit-tch-id').value;
+      const tch = db.teachers.find(t => t.id === id);
+      if (!tch) return;
+
+      const name = document.getElementById('edit-tch-name').value.trim();
+      if (!name) {
+        showToast('Nama Guru tidak boleh kosong!');
+        return;
+      }
+
+      tch.nip = document.getElementById('edit-tch-nip').value.trim() || '-';
+      tch.name = name;
+      tch.subject = document.getElementById('edit-tch-subject').value.trim() || 'Guru Mata Pelajaran';
+
+      saveDatabase(true);
+      showToast(`Data guru ${name} berhasil diperbarui!`);
       closeModal();
     });
   }
@@ -2451,7 +2515,7 @@ function bindModalEvents() {
       if (state.selectedRombel === oldName) state.selectedRombel = newName;
       if (state.daftarRombel === oldName) state.daftarRombel = newName;
 
-      saveDatabase();
+      saveDatabase(true);
       showToast(`Rombel berhasil diubah dari ${oldName} menjadi ${newName} (${updatedCount} siswa dipindahkan)!`);
       closeModal();
     });
@@ -3102,20 +3166,10 @@ function bindMainEvents() {
       if (!s) return;
       if (confirm(`Yakin ingin menghapus data siswa ${s.name} (NIS: ${s.nis})?`)) {
         db.students = db.students.filter(x => x.id !== id);
-        saveDatabase();
+        saveDatabase(true);
         showToast('Data siswa berhasil dihapus.');
         renderApp();
       }
-    });
-  });
-
-  document.querySelectorAll('[data-del-student]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const id = btn.getAttribute('data-del-student');
-      db.students = db.students.filter(s => s.id !== id);
-      saveDatabase();
-      showToast('Data siswa dihapus.');
-      renderApp();
     });
   });
 
@@ -3133,39 +3187,23 @@ function bindMainEvents() {
         name,
         subject: subject || 'Guru Mata Pelajaran'
       });
-      saveDatabase();
+      saveDatabase(true);
       showToast(`Data guru ${name} berhasil ditambahkan.`);
       renderApp();
     });
   }
 
-  document.querySelectorAll('[data-edit-teacher]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const id = btn.getAttribute('data-edit-teacher');
-      const tch = db.teachers.find(t => t.id === id);
-      if (!tch) return;
-      const newName = prompt('Edit Nama Lengkap Guru:', tch.name);
-      if (newName === null) return;
-      const newNip = prompt('Edit NIP Guru:', tch.nip);
-      if (newNip === null) return;
-      const newSubject = prompt('Edit Mata Pelajaran / Jabatan:', tch.subject);
-      if (newSubject === null) return;
-      tch.name = newName.trim() || tch.name;
-      tch.nip = newNip.trim() || tch.nip;
-      tch.subject = newSubject.trim() || tch.subject;
-      saveDatabase();
-      showToast(`Data guru ${tch.name} berhasil diperbarui!`);
-      renderApp();
-    });
-  });
-
   document.querySelectorAll('[data-del-teacher]').forEach(btn => {
     btn.addEventListener('click', () => {
       const id = btn.getAttribute('data-del-teacher');
-      db.teachers = db.teachers.filter(t => t.id !== id);
-      saveDatabase();
-      showToast('Data guru dihapus.');
-      renderApp();
+      const tch = db.teachers.find(t => t.id === id);
+      if (!tch) return;
+      if (confirm(`Yakin ingin menghapus data guru ${tch.name}?`)) {
+        db.teachers = db.teachers.filter(t => t.id !== id);
+        saveDatabase(true);
+        showToast('Data guru dihapus.');
+        renderApp();
+      }
     });
   });
 
@@ -3209,24 +3247,11 @@ function bindMainEvents() {
         role,
         jadwalPiket: jadwalPiket || 'Guru Piket Harian'
       });
-      saveDatabase();
+      saveDatabase(true);
       showToast(`Akun login @${username} untuk ${name} berhasil dibuat!`);
       renderApp();
     });
   }
-
-  document.querySelectorAll('[data-open-edit-user]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const id = btn.getAttribute('data-open-edit-user');
-      const usr = db.users.find(u => u.id === id);
-      if (!usr) return;
-      state.editModal = {
-        type: 'user',
-        data: { ...usr }
-      };
-      renderApp();
-    });
-  });
 
   document.querySelectorAll('[data-del-user]').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -3239,10 +3264,56 @@ function bindMainEvents() {
       }
       if (confirm(`Yakin ingin menghapus akun login @${usr.username} (${usr.name})?`)) {
         db.users = db.users.filter(u => u.id !== id);
-        saveDatabase();
+        saveDatabase(true);
         showToast(`Akun @${usr.username} berhasil dihapus.`);
         renderApp();
       }
+    });
+  });
+
+  // --- POPUP MODAL SATU HALAMAN UNTUK EDIT DATA (SISWA, GURU, AKUN, ROMBEL) ---
+  // 1. Popup Edit Siswa
+  document.querySelectorAll('[data-open-edit-student]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = btn.getAttribute('data-open-edit-student');
+      const stu = db.students.find(s => s.id === id);
+      if (stu) {
+        state.editModal = { type: 'student', data: stu };
+        renderApp();
+      }
+    });
+  });
+
+  // 2. Popup Edit Dewan Guru
+  document.querySelectorAll('[data-open-edit-teacher]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = btn.getAttribute('data-open-edit-teacher');
+      const tch = db.teachers.find(t => t.id === id);
+      if (tch) {
+        state.editModal = { type: 'teacher', data: tch };
+        renderApp();
+      }
+    });
+  });
+
+  // 3. Popup Edit Akun Login
+  document.querySelectorAll('[data-open-edit-user]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = btn.getAttribute('data-open-edit-user');
+      const usr = db.users.find(u => u.id === id);
+      if (usr) {
+        state.editModal = { type: 'user', data: usr };
+        renderApp();
+      }
+    });
+  });
+
+  // 4. Popup Edit Rombel
+  document.querySelectorAll('[data-open-edit-rombel]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const r = btn.getAttribute('data-open-edit-rombel');
+      state.editModal = { type: 'rombel', data: { oldName: r } };
+      renderApp();
     });
   });
 }

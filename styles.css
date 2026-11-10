@@ -1045,3 +1045,88 @@ body {
   }
 }
 
+/* ==================== FORM EDIT TERPADU / ALL-IN-ONE MASTER EDITOR ==================== */
+.master-edit-section {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  margin-bottom: 24px;
+  overflow: hidden;
+  scroll-margin-top: 80px;
+}
+
+.master-edit-section-header {
+  background: linear-gradient(90deg, #F8F6F4 0%, #FFFFFF 100%);
+  border-bottom: 2px solid var(--color-gold);
+  padding: 16px 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.master-edit-section-header h4 {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 800;
+  color: var(--color-maroon);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.editable-table-input {
+  width: 100%;
+  padding: 7px 10px;
+  font-size: 0.85rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-family: inherit;
+  transition: all 0.2s ease;
+}
+
+.editable-table-input:focus {
+  border-color: var(--color-gold);
+  outline: none;
+  background: #FFFFFF;
+  box-shadow: 0 0 0 3px rgba(212, 175, 55, 0.25);
+}
+
+.editable-table-input:hover {
+  border-color: var(--color-gold-dark);
+}
+
+.editable-table-input[readonly] {
+  background: var(--color-bg);
+  color: var(--color-text-muted);
+  cursor: not-allowed;
+}
+
+.master-new-row-card {
+  background: #FCFAF7;
+  border-top: 2px dashed var(--color-gold);
+  padding: 16px 20px;
+}
+
+.master-sticky-bottom-bar {
+  position: sticky;
+  bottom: 16px;
+  z-index: 100;
+  background: linear-gradient(90deg, var(--color-maroon) 0%, var(--color-black) 100%);
+  color: var(--color-white);
+  padding: 14px 24px;
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+  border: 2px solid var(--color-gold);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+
