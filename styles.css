@@ -213,15 +213,42 @@ body {
   border-right: 2px solid var(--color-gold);
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
   position: sticky;
   top: 0;
   height: 100vh;
+  height: 100dvh;
+  max-height: 100vh;
+  max-height: 100dvh;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-gold) rgba(0, 0, 0, 0.25);
   z-index: 20;
 }
 
+.sidebar::-webkit-scrollbar {
+  width: 5px;
+}
+
+.sidebar::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.sidebar::-webkit-scrollbar-thumb {
+  background: var(--color-gold);
+  border-radius: 99px;
+}
+
+.sidebar::-webkit-scrollbar-thumb:hover {
+  background: var(--color-gold-light);
+}
+
 .sidebar-top {
-  padding: 24px 20px;
+  padding: 24px 20px 16px;
+  flex: 1 0 auto;
 }
 
 .brand-header {
@@ -342,9 +369,11 @@ body {
 }
 
 .sidebar-bottom {
-  padding: 18px 20px;
+  padding: 16px 20px 24px;
   border-top: 1px solid rgba(212, 175, 55, 0.25);
-  background: rgba(0, 0, 0, 0.25);
+  background: rgba(0, 0, 0, 0.3);
+  margin-top: auto;
+  flex-shrink: 0;
 }
 
 .logout-btn {
@@ -1099,6 +1128,15 @@ body.sidebar-locked {
     pointer-events: auto;
   }
 
+  body.sidebar-locked {
+    overflow: hidden !important;
+    touch-action: none;
+  }
+
+  body.sidebar-locked .sidebar {
+    touch-action: pan-y !important;
+  }
+
   .sidebar {
     position: fixed !important;
     top: 0;
@@ -1107,13 +1145,22 @@ body.sidebar-locked {
     width: 290px;
     max-width: 86vw;
     height: 100vh !important;
+    height: 100dvh !important;
+    max-height: 100vh !important;
+    max-height: 100dvh !important;
     z-index: 2000;
     transform: translateX(-105%);
     transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.3s ease;
     box-shadow: none;
-    overflow-y: auto;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
     -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    touch-action: pan-y !important;
     display: flex !important;
+    flex-direction: column !important;
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-gold) rgba(0, 0, 0, 0.25);
   }
 
   .sidebar.mobile-open {
