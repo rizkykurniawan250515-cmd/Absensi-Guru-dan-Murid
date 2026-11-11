@@ -548,6 +548,7 @@ function renderApp() {
 
   root.innerHTML = `
     <div class="app-shell">
+      <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
       ${renderSidebar()}
       <div class="main-area">
         ${renderTopbar()}
@@ -655,6 +656,7 @@ function renderSidebar() {
             <h2>${escapeHtml(s.schoolName)}</h2>
             <span>Absensi Guru & Siswa</span>
           </div>
+          <button type="button" id="btn-close-sidebar" class="sidebar-close-btn" aria-label="Tutup Menu">✕</button>
         </div>
 
         <div class="active-piket-card">
@@ -714,12 +716,19 @@ function renderTopbar() {
 
   return `
     <header class="topbar">
-      <div class="topbar-left">
-        <h1>${escapeHtml(s.schoolName)} — Tahun Ajaran ${escapeHtml(s.academicYear)}</h1>
-        <p>
-          Petugas Piket Tanggal <strong>${escapeHtml(formatDateID(state.selectedDate))}</strong>:
-          <strong>${piketToday ? escapeHtml(piketToday.name) + ' (@' + escapeHtml(piketToday.username) + ')' : escapeHtml(state.currentUser.name)}</strong>
-        </p>
+      <div class="topbar-left-wrap">
+        <button type="button" id="btn-toggle-sidebar" class="hamburger-btn" aria-label="Buka Menu Navigasi" title="Buka Menu">
+          <span class="hamburger-bar"></span>
+          <span class="hamburger-bar"></span>
+          <span class="hamburger-bar"></span>
+        </button>
+        <div class="topbar-left">
+          <h1>${escapeHtml(s.schoolName)} — Tahun Ajaran ${escapeHtml(s.academicYear)}</h1>
+          <p>
+            Petugas Piket Tanggal <strong>${escapeHtml(formatDateID(state.selectedDate))}</strong>:
+            <strong>${piketToday ? escapeHtml(piketToday.name) + ' (@' + escapeHtml(piketToday.username) + ')' : escapeHtml(state.currentUser.name)}</strong>
+          </p>
+        </div>
       </div>
       <div class="topbar-right">
         <div class="sheet-status-pill ${fbConnected ? 'connected' : ''}" title="Database Firebase Firestore Real-Time Cloud">
@@ -732,6 +741,8 @@ function renderTopbar() {
         <div class="date-pill">📅 ${escapeHtml(formatDateID(state.selectedDate))}</div>
       </div>
     </header>
+  `;
+}
   `;
 }
 
@@ -2570,6 +2581,28 @@ function bindModalEvents() {
   }
 }
 function bindMainEvents() {
+  // Mobile Sidebar Drawer Toggle
+  const toggleBtn = document.getElementById('btn-toggle-sidebar');
+  const closeSidebarBtn = document.getElementById('btn-close-sidebar');
+  const sidebarBackdrop = document.getElementById('sidebar-backdrop');
+  const sidebar = document.querySelector('.sidebar');
+
+  const closeMobileSidebar = () => {
+    if (sidebar) sidebar.classList.remove('mobile-open');
+    if (sidebarBackdrop) sidebarBackdrop.classList.remove('active');
+    document.body.classList.remove('sidebar-locked');
+  };
+
+  const openMobileSidebar = () => {
+    if (sidebar) sidebar.classList.add('mobile-open');
+    if (sidebarBackdrop) sidebarBackdrop.classList.add('active');
+    document.body.classList.add('sidebar-locked');
+  };
+
+  if (toggleBtn) toggleBtn.addEventListener('click', openMobileSidebar);
+  if (closeSidebarBtn) closeSidebarBtn.addEventListener('click', closeMobileSidebar);
+  if (sidebarBackdrop) sidebarBackdrop.addEventListener('click', closeMobileSidebar);
+
   // Navigasi Sidebar
   document.querySelectorAll('[data-nav]').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -2582,6 +2615,7 @@ function bindMainEvents() {
         showToast('⚠️ Menu Pengaturan Superadmin hanya dapat diakses oleh Admin!');
         return;
       }
+      closeMobileSidebar();
       state.activeMenu = targetNav;
       renderApp();
     });
@@ -2599,6 +2633,7 @@ function bindMainEvents() {
         showToast('⚠️ Menu Pengaturan Superadmin hanya dapat diakses oleh Admin!');
         return;
       }
+      closeMobileSidebar();
       state.activeMenu = targetGoto;
       renderApp();
     });

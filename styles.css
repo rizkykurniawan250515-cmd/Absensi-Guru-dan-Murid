@@ -385,6 +385,56 @@ body {
   box-shadow: var(--shadow-sm);
 }
 
+.topbar-left-wrap {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.hamburger-btn {
+  display: none; /* Sembunyi di PC */
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 4.5px;
+  width: 40px;
+  height: 40px;
+  background: var(--color-surface);
+  border: 1.5px solid var(--color-gold);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  padding: 8px 7px;
+  flex-shrink: 0;
+  transition: all 0.2s ease;
+  box-shadow: var(--shadow-sm);
+}
+
+.hamburger-btn:hover {
+  background: var(--color-gold-light);
+  border-color: var(--color-maroon);
+}
+
+.hamburger-bar {
+  display: block;
+  width: 22px;
+  height: 2.5px;
+  background: var(--color-maroon);
+  border-radius: 2px;
+  transition: all 0.2s ease;
+}
+
+.sidebar-close-btn {
+  display: none; /* Sembunyi di PC */
+}
+
+.sidebar-backdrop {
+  display: none; /* Sembunyi di PC */
+}
+
+body.sidebar-locked {
+  overflow: hidden;
+}
+
 .topbar-left h1 {
   font-size: 1.3rem;
   font-weight: 800;
@@ -1026,10 +1076,73 @@ body {
   .app-shell {
     grid-template-columns: 1fr;
   }
-  .sidebar {
-    position: relative;
-    height: auto;
+  
+  /* Sembunyikan side menu default di HP/Tablet, ganti dengan simbol 3 baris (hamburger) */
+  .hamburger-btn {
+    display: inline-flex;
   }
+  
+  .sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(18, 18, 20, 0.72);
+    backdrop-filter: blur(3px);
+    z-index: 1999;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s ease;
+  }
+  
+  .sidebar-backdrop.active {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .sidebar {
+    position: fixed !important;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 290px;
+    max-width: 86vw;
+    height: 100vh !important;
+    z-index: 2000;
+    transform: translateX(-105%);
+    transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.3s ease;
+    box-shadow: none;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    display: flex !important;
+  }
+
+  .sidebar.mobile-open {
+    transform: translateX(0);
+    box-shadow: 10px 0 35px rgba(0, 0, 0, 0.65);
+  }
+
+  .sidebar-close-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-left: auto;
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.12);
+    border: 1.5px solid rgba(212, 175, 55, 0.45);
+    color: var(--color-gold);
+    font-size: 1.15rem;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: all 0.2s ease;
+  }
+
+  .sidebar-close-btn:hover {
+    background: var(--color-gold);
+    color: var(--color-black);
+  }
+
   .grid-2 {
     grid-template-columns: 1fr;
   }
@@ -1062,28 +1175,28 @@ body {
   }
 
   .sidebar-top {
-    padding: 16px 14px;
+    padding: 18px 16px;
   }
   .brand-header {
-    margin-bottom: 14px;
-    padding-bottom: 14px;
+    margin-bottom: 16px;
+    padding-bottom: 16px;
   }
   .nav-menu {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 6px;
-  }
-  .nav-btn {
-    padding: 9px 10px;
-    font-size: 0.8rem;
+    display: flex;
+    flex-direction: column;
     gap: 8px;
   }
+  .nav-btn {
+    padding: 11px 12px;
+    font-size: 0.88rem;
+    gap: 10px;
+  }
   .nav-icon {
-    font-size: 0.95rem;
-    width: 18px;
+    font-size: 1.05rem;
+    width: 20px;
   }
   .sidebar-bottom {
-    padding: 12px 14px;
+    padding: 14px 16px;
   }
 
   .topbar {
@@ -1091,6 +1204,16 @@ body {
     flex-direction: column;
     align-items: flex-start;
     gap: 10px;
+  }
+  .topbar-left-wrap {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .topbar-left {
+    flex: 1;
+    min-width: 0;
   }
   .topbar-left h1 {
     font-size: 1.05rem;
