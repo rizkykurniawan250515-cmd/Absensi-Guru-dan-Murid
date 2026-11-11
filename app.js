@@ -275,6 +275,7 @@ function createInitialData() {
       ketIzinLabel: 'Izin (I)',
       ketSakitLabel: 'Sakit (S)',
       ketAlphaLabel: 'Alpha / Tanpa Ket (A)',
+      ketTidakAdaJamLabel: 'Tidak Ada Jam (TJ)',
       defaultIzinPresets: 'Izin acara keluarga, Izin mengikuti lomba/kegiatan sekolah, Izin urusan mendadak',
       defaultSakitPresets: 'Sakit demam (Surat Dokter), Sakit perut/flu (Konfirmasi Wali Murid), Rawat jalan',
       spreadsheetViewUrl: '',
@@ -379,6 +380,7 @@ function loadDatabase() {
     if (parsed.settings.schoolLogoText === undefined) parsed.settings.schoolLogoText = 'DP';
     if (parsed.settings.schoolPhone === undefined) parsed.settings.schoolPhone = '(021) 7891234';
     if (parsed.settings.schoolEmail === undefined) parsed.settings.schoolEmail = 'info@smpdyahpithaloka.sch.id';
+    if (!parsed.settings.ketTidakAdaJamLabel) parsed.settings.ketTidakAdaJamLabel = 'Tidak Ada Jam (TJ)';
 
     if (!Array.isArray(parsed.rombels) || parsed.rombels.length === 0) parsed.rombels = initial.rombels;
     if (!Array.isArray(parsed.students)) parsed.students = initial.students;
@@ -857,7 +859,7 @@ function renderDashboardView() {
   });
 
   // Hitung data kehadiran guru (Hanya yang benar-benar telah diinput oleh guru piket)
-  let tchH = 0, tchI = 0, tchS = 0, tchA = 0;
+  let tchH = 0, tchI = 0, tchS = 0, tchA = 0, tchTJ = 0;
   let tchRecorded = 0;
   teachers.forEach(t => {
     const rec = tchDay[t.id];
@@ -867,6 +869,7 @@ function renderDashboardView() {
       else if (rec.status === 'I') tchI++;
       else if (rec.status === 'S') tchS++;
       else if (rec.status === 'A') tchA++;
+      else if (rec.status === 'TJ') tchTJ++;
     }
   });
 
@@ -875,15 +878,28 @@ function renderDashboardView() {
 
   // Jika belum ada input, persentase adalah nihil (0%)
   const stuPct = hasStuInput && students.length ? Math.round((stuH / students.length) * 100) : 0;
-  const tchPct = hasTchInput && teachers.length ? Math.round((tchH / teachers.length) * 100) : 0;
+  
+  // Opsi "Tidak Ada Jam" (TJ) TIDAK MEMPENGARUHI persentase kehadiran guru
+  // Total guru yang wajib/terjadwal hadir mengajar = (tchH + tchI + tchS + tchA)
+  const tchWajib = tchH + tchI + tchS + tchA;
+  let tchPct = 0;
+  if (hasTchInput) {
+    if (tchWajib > 0) {
+      tchPct = Math.round((tchH / tchWajib) * 100);
+    } else if (tchTJ > 0) {
+      // Jika semua guru yang diinput berstatus tidak ada jam mengajar, persentase tetap 100%
+      tchPct = 100;
+    }
+  }
 
   // Daftar siswa/guru yang Izin atau Sakit hari ini (hanya jika sudah diinput)
   const absentStudents = students
     .filter(s => stuDay[s.id] && stuDay[s.id].status && stuDay[s.id].status !== 'H')
     .map(s => ({ ...s, ...stuDay[s.id] }));
 
+  // Guru yang "Tidak Ada Jam" BUKAN ketidakhadiran bermasalah, jadi tidak dimasukkan ke daftar peringatan
   const absentTeachers = teachers
-    .filter(t => tchDay[t.id] && tchDay[t.id].status && tchDay[t.id].status !== 'H')
+    .filter(t => tchDay[t.id] && tchDay[t.id].status && tchDay[t.id].status !== 'H' && tchDay[t.id].status !== 'TJ')
     .map(t => ({ ...t, ...tchDay[t.id] }));
 
   const piketInfo = piketLogs[dt];
@@ -920,7 +936,7 @@ function renderDashboardView() {
         <div class="stat-value" style="${!hasTchInput ? 'color:var(--color-text-muted);' : ''}">${hasTchInput ? `${tchPct}%` : '0%'}</div>
         <div class="stat-meta">
           ${hasTchInput
-            ? `Hadir: ${tchH} | Izin: ${tchI} | Sakit: ${tchS} | Alpha: ${tchA} (Tercatat: ${tchRecorded}/${db.teachers.length} Guru)`
+            ? `Hadir: ${tchH} | Izin: ${tchI} | Sakit: ${tchS} | Alpha: ${tchA} | Tidak Ada Jam: ${tchTJ} (Tercatat: ${tchRecorded}/${db.teachers.length} Guru)`
             : `<span style="color:#B91C1C;font-weight:700;">Belum Diinput (Nihil / 0)</span> • Total ${db.teachers.length} Guru`}
         </div>
       </div>
@@ -1362,14 +1378,14 @@ function renderTeacherAttendanceView() {
                 <th style="width:170px;">NIP</th>
                 <th>Nama Lengkap Guru</th>
                 <th>Mata Pelajaran / Jabatan</th>
-                <th style="width:310px;">Status Kehadiran</th>
+                <th style="min-width:390px;">Status Kehadiran</th>
                 <th>Keterangan Izin / Sakit / Tugas</th>
               </tr>
             </thead>
             <tbody>
               ${filteredTeachers.map((tch, idx) => {
                 const rec = dayRecords[tch.id] || { status: 'H', keterangan: '' };
-                const needKet = rec.status !== 'H';
+                const needKet = rec.status === 'I' || rec.status === 'S' || rec.status === 'A';
                 return `
                   <tr>
                     <td>${idx + 1}</td>
@@ -1378,10 +1394,11 @@ function renderTeacherAttendanceView() {
                     <td>${escapeHtml(tch.subject)}</td>
                     <td>
                       <div class="status-selector">
-                        <button type="button" class="status-pill-btn ${rec.status === 'H' ? 'active-H' : ''}" data-tch-status="${escapeHtml(tch.id)}" data-val="H">${escapeHtml(db.settings.ketHadirLabel)}</button>
-                        <button type="button" class="status-pill-btn ${rec.status === 'I' ? 'active-I' : ''}" data-tch-status="${escapeHtml(tch.id)}" data-val="I">${escapeHtml(db.settings.ketIzinLabel)}</button>
-                        <button type="button" class="status-pill-btn ${rec.status === 'S' ? 'active-S' : ''}" data-tch-status="${escapeHtml(tch.id)}" data-val="S">${escapeHtml(db.settings.ketSakitLabel)}</button>
+                        <button type="button" class="status-pill-btn ${rec.status === 'H' ? 'active-H' : ''}" data-tch-status="${escapeHtml(tch.id)}" data-val="H">${escapeHtml(db.settings.ketHadirLabel || 'Hadir (H)')}</button>
+                        <button type="button" class="status-pill-btn ${rec.status === 'I' ? 'active-I' : ''}" data-tch-status="${escapeHtml(tch.id)}" data-val="I">${escapeHtml(db.settings.ketIzinLabel || 'Izin (I)')}</button>
+                        <button type="button" class="status-pill-btn ${rec.status === 'S' ? 'active-S' : ''}" data-tch-status="${escapeHtml(tch.id)}" data-val="S">${escapeHtml(db.settings.ketSakitLabel || 'Sakit (S)')}</button>
                         <button type="button" class="status-pill-btn ${rec.status === 'A' ? 'active-A' : ''}" data-tch-status="${escapeHtml(tch.id)}" data-val="A">Alpha (A)</button>
+                        <button type="button" class="status-pill-btn ${rec.status === 'TJ' ? 'active-TJ' : ''}" data-tch-status="${escapeHtml(tch.id)}" data-val="TJ" title="Tidak ada jam mengajar hari ini (tidak mempengaruhi persentase kehadiran)">${escapeHtml(db.settings.ketTidakAdaJamLabel || 'Tidak Ada Jam (TJ)')}</button>
                       </div>
                     </td>
                     <td>
@@ -1389,7 +1406,7 @@ function renderTeacherAttendanceView() {
                         type="text"
                         class="ket-input ${needKet ? 'highlight-required' : ''}"
                         data-tch-ket="${escapeHtml(tch.id)}"
-                        placeholder="${rec.status === 'I' ? 'Contoh: Izin Dinas Luar / Keperluan Keluarga...' : rec.status === 'S' ? 'Contoh: Sakit (Surat Dokter)...' : 'Keterangan tambahan'}"
+                        placeholder="${rec.status === 'TJ' ? 'Tidak ada jam mengajar hari ini (opsional)' : rec.status === 'I' ? 'Contoh: Izin Dinas Luar / Keperluan Keluarga...' : rec.status === 'S' ? 'Contoh: Sakit (Surat Dokter)...' : 'Keterangan tambahan (opsional)'}"
                         value="${escapeHtml(rec.keterangan || '')}"
                       />
                     </td>
@@ -1443,7 +1460,7 @@ function renderRekapView() {
     : db.teachers;
 
   const recapRows = items.map(person => {
-    let H = 0, I = 0, S = 0, A = 0;
+    let H = 0, I = 0, S = 0, A = 0, TJ = 0;
     const notes = [];
     activeDates.forEach(d => {
       const table = isSiswa ? db.studentAttendance[d] : db.teacherAttendance[d];
@@ -1459,13 +1476,26 @@ function renderRekapView() {
       } else if (rec.status === 'A') {
         A++;
         notes.push(`${d.slice(8, 10)}/${d.slice(5, 7)} (Alpha)`);
+      } else if (rec.status === 'TJ') {
+        TJ++;
       }
     });
-    const totalDays = H + I + S + A;
-    const pct = totalDays > 0 ? Math.round((H / totalDays) * 100) : 0;
+
+    // PENTING: Untuk dewan guru, opsi "Tidak Ada Jam" (TJ) TIDAK MEMPENGARUHI persentase kehadiran guru bersangkutan.
+    // Hari wajib hadir hanyalah hari di mana guru ada jadwal tatap muka/mengajar (H + I + S + A).
+    const totalWajib = H + I + S + A;
+    const totalDays = totalWajib + TJ;
+    let pct = 0;
+    if (totalWajib > 0) {
+      pct = Math.round((H / totalWajib) * 100);
+    } else if (TJ > 0) {
+      pct = 100;
+    }
+
     return {
       ...person,
-      H, I, S, A,
+      H, I, S, A, TJ,
+      totalWajib,
       totalDays,
       pct,
       notesText: notes.join('; ')
@@ -1476,8 +1506,9 @@ function renderRekapView() {
   const totalI = recapRows.reduce((acc, r) => acc + r.I, 0);
   const totalS = recapRows.reduce((acc, r) => acc + r.S, 0);
   const totalA = recapRows.reduce((acc, r) => acc + r.A, 0);
-  const grandTotal = totalH + totalI + totalS + totalA;
-  const avgPct = grandTotal > 0 ? Math.round((totalH / grandTotal) * 100) : 0;
+  const totalTJ = recapRows.reduce((acc, r) => acc + (r.TJ || 0), 0);
+  const grandTotalWajib = totalH + totalI + totalS + totalA;
+  const avgPct = grandTotalWajib > 0 ? Math.round((totalH / grandTotalWajib) * 100) : (totalTJ > 0 ? 100 : 0);
 
   return `
     <div class="panel-card">
@@ -1564,6 +1595,13 @@ function renderRekapView() {
             <div class="stat-value">${totalA}</div>
             <div class="stat-meta">Tanpa keterangan</div>
           </div>
+          ${!isSiswa ? `
+            <div class="stat-card" style="border-top-color:#475569;">
+              <span class="stat-label">Tidak Ada Jam (TJ)</span>
+              <div class="stat-value" style="color:#475569;">${totalTJ}</div>
+              <div class="stat-meta">Bebas jadwal mengajar (tidak mempengaruhi %)</div>
+            </div>
+          ` : ''}
         </div>
 
         <div class="table-responsive">
@@ -1578,6 +1616,7 @@ function renderRekapView() {
                 <th style="text-align:center;">Izin (I)</th>
                 <th style="text-align:center;">Sakit (S)</th>
                 <th style="text-align:center;">Alpha (A)</th>
+                ${!isSiswa ? `<th style="text-align:center;">Tidak Ada Jam (TJ)</th>` : ''}
                 <th style="text-align:center;">% Hadir</th>
                 <th>Riwayat Keterangan (Izin / Sakit)</th>
               </tr>
@@ -1593,8 +1632,9 @@ function renderRekapView() {
                   <td style="text-align:center;"><span class="badge badge-I">${r.I}</span></td>
                   <td style="text-align:center;"><span class="badge badge-S">${r.S}</span></td>
                   <td style="text-align:center;"><span class="badge badge-A">${r.A}</span></td>
+                  ${!isSiswa ? `<td style="text-align:center;"><span class="badge badge-TJ">${r.TJ || 0}</span></td>` : ''}
                   <td style="text-align:center;"><strong>${r.pct}%</strong></td>
-                  <td style="font-size:0.82rem;color:var(--color-text-muted);">${escapeHtml(r.notesText || (r.totalDays > 0 ? 'Hadir penuh' : 'Belum ada input'))}</td>
+                  <td style="font-size:0.82rem;color:var(--color-text-muted);">${escapeHtml(r.notesText || (r.totalDays > 0 ? (r.totalWajib > 0 ? 'Hadir penuh' : 'Tidak ada jadwal tatap muka') : 'Belum ada input'))}</td>
                 </tr>
               `).join('')}
             </tbody>
@@ -1938,6 +1978,10 @@ function renderSuperKeteranganTab() {
         <div class="form-group">
           <label>Label Tombol Alpha / Tanpa Keterangan</label>
           <input type="text" id="set-ketAlphaLabel" class="form-control" value="${escapeHtml(s.ketAlphaLabel || 'Alpha / Tanpa Ket (A)')}" />
+        </div>
+        <div class="form-group">
+          <label>Label Tombol Tidak Ada Jam (Khusus Guru)</label>
+          <input type="text" id="set-ketTidakAdaJamLabel" class="form-control" value="${escapeHtml(s.ketTidakAdaJamLabel || 'Tidak Ada Jam (TJ)')}" />
         </div>
         <div class="form-group">
           <label>Preset Pilihan Cepat Keterangan Izin (Pisahkan dengan koma)</label>
@@ -3157,6 +3201,8 @@ function bindMainEvents() {
       db.settings.ketIzinLabel = document.getElementById('set-ketIzinLabel').value.trim();
       db.settings.ketSakitLabel = document.getElementById('set-ketSakitLabel').value.trim();
       db.settings.ketAlphaLabel = document.getElementById('set-ketAlphaLabel').value.trim();
+      const tajInput = document.getElementById('set-ketTidakAdaJamLabel');
+      if (tajInput) db.settings.ketTidakAdaJamLabel = tajInput.value.trim() || 'Tidak Ada Jam (TJ)';
       db.settings.defaultIzinPresets = document.getElementById('set-defaultIzinPresets').value.trim();
       db.settings.defaultSakitPresets = document.getElementById('set-defaultSakitPresets').value.trim();
       db.settings.schoolAddress = document.getElementById('set-schoolAddress').value.trim();
@@ -3678,11 +3724,13 @@ function exportCurrentRekapCSV() {
     `Periode,${isWeekly ? state.rekapWeekStart + ' s/d ' + state.rekapWeekEnd : state.rekapMonth}`,
     `Dicetak Oleh,${state.currentUser.name} (@${state.currentUser.username})`,
     '',
-    `No,${isSiswa ? 'NIS' : 'NIP'},Nama Lengkap,${isSiswa ? 'Rombel' : 'Jabatan/Mapel'},Hadir (H),Izin (I),Sakit (S),Alpha (A),Persentase Hadir,Detail Keterangan Izin/Sakit`
+    isSiswa
+      ? 'No,NIS,Nama Lengkap Siswa,Rombel,Hadir (H),Izin (I),Sakit (S),Alpha (A),Persentase Hadir,Detail Keterangan Izin/Sakit'
+      : 'No,NIP,Nama Lengkap Guru,Mata Pelajaran/Jabatan,Hadir (H),Izin (I),Sakit (S),Alpha (A),Tidak Ada Jam (TJ),Persentase Hadir,Detail Keterangan'
   ];
 
   items.forEach((person, idx) => {
-    let H = 0, I = 0, S = 0, A = 0;
+    let H = 0, I = 0, S = 0, A = 0, TJ = 0;
     const notes = [];
     activeDates.forEach(d => {
       const table = isSiswa ? db.studentAttendance[d] : db.teacherAttendance[d];
@@ -3692,10 +3740,22 @@ function exportCurrentRekapCSV() {
       else if (rec.status === 'I') { I++; notes.push(`${d}: Izin (${rec.keterangan || '-'})`); }
       else if (rec.status === 'S') { S++; notes.push(`${d}: Sakit (${rec.keterangan || '-'})`); }
       else if (rec.status === 'A') { A++; notes.push(`${d}: Alpha`); }
+      else if (rec.status === 'TJ') { TJ++; }
     });
-    const total = H + I + S + A;
-    const pct = total > 0 ? Math.round((H / total) * 100) : 0;
-    lines.push(`${idx + 1},"${isSiswa ? person.nis : person.nip}","${person.name}","${isSiswa ? person.rombel : person.subject}",${H},${I},${S},${A},"${pct}%","${notes.join('; ')}"`);
+    // Untuk guru, status Tidak Ada Jam (TJ) tidak mempengaruhi % kehadiran
+    const totalWajib = H + I + S + A;
+    let pct = 0;
+    if (totalWajib > 0) {
+      pct = Math.round((H / totalWajib) * 100);
+    } else if (TJ > 0) {
+      pct = 100;
+    }
+
+    if (isSiswa) {
+      lines.push(`${idx + 1},"${person.nis}","${person.name}","${person.rombel}",${H},${I},${S},${A},"${pct}%","${notes.join('; ')}"`);
+    } else {
+      lines.push(`${idx + 1},"${person.nip}","${person.name}","${person.subject}",${H},${I},${S},${A},${TJ},"${pct}%","${notes.join('; ')}"`);
+    }
   });
 
   const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
@@ -3713,6 +3773,7 @@ function getStatusLabel(code) {
   if (code === 'I') return db.settings.ketIzinLabel || 'Izin (I)';
   if (code === 'S') return db.settings.ketSakitLabel || 'Sakit (S)';
   if (code === 'A') return db.settings.ketAlphaLabel || 'Alpha (A)';
+  if (code === 'TJ') return db.settings.ketTidakAdaJamLabel || 'Tidak Ada Jam (TJ)';
   return code;
 }
 
