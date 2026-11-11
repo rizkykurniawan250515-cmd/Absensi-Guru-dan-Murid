@@ -8,6 +8,23 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css" />
+  <script>
+    // Global Error Handler untuk mencegah blank screen dan menampilkan detail jika ada galat
+    window.addEventListener('error', function(e) {
+      console.error('Unhandled Global Error:', e);
+      var app = document.getElementById('app');
+      if (app && app.children.length === 0) {
+        app.innerHTML = '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#F8F6F4;padding:24px;font-family:sans-serif;">' +
+          '<div style="max-width:500px;width:100%;background:#fff;border-radius:12px;border:2px solid #7A0C1E;box-shadow:0 10px 25px rgba(0,0,0,0.15);padding:32px;text-align:center;">' +
+            '<div style="font-size:3rem;margin-bottom:12px;">⚠️</div>' +
+            '<h3 style="color:#7A0C1E;margin-bottom:8px;">Terjadi Kendala Memuat Skrip</h3>' +
+            '<p style="color:#666;font-size:0.88rem;margin-bottom:20px;line-height:1.5;">' + (e.message || 'Error executing script') + '</p>' +
+            '<button type="button" onclick="localStorage.clear();location.reload();" style="padding:10px 18px;background:#7A0C1E;color:#fff;border:none;border-radius:6px;font-weight:700;cursor:pointer;">Bersihkan Cache & Muat Ulang</button>' +
+          '</div>' +
+        '</div>';
+      }
+    });
+  </script>
 </head>
 <body>
   <div id="app"></div>

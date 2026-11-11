@@ -320,8 +320,10 @@ function getStoredSessionUser() {
         }
       }
       // Validasi dengan user yang ada di database
-      const found = db.users.find(u => u.username.toLowerCase() === sessionObj.username.toLowerCase());
-      return found || null;
+      if (db && Array.isArray(db.users)) {
+        const found = db.users.find(u => u && u.username && u.username.toLowerCase() === sessionObj.username.toLowerCase());
+        return found || null;
+      }
     }
   } catch (_) {}
   return null;
@@ -338,7 +340,7 @@ let state = {
   currentUser: initialUser,
   activeMenu: initialUser ? (isAdminUser(initialUser) ? 'superadmin' : 'dashboard') : 'dashboard',
   selectedDate: getTodayISO(),
-  selectedRombel: db.rombels[0] || 'VII-A',
+  selectedRombel: (db && db.rombels && db.rombels[0]) || 'VII-A',
   daftarRombel: 'ALL',
   daftarSearch: '',
   studentSearch: '',
@@ -356,26 +358,38 @@ let state = {
 };
 
 function loadDatabase() {
+  const initial = createInitialData();
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) {
-      const initial = createInitialData();
       try { localStorage.setItem(STORAGE_KEY, JSON.stringify(initial)); } catch (_) {}
       return initial;
     }
     const parsed = JSON.parse(raw);
-    if (!parsed.users || !parsed.users.some(u => u.role === 'superadmin')) {
-      const initial = createInitialData();
+    if (!parsed || typeof parsed !== 'object') {
       try { localStorage.setItem(STORAGE_KEY, JSON.stringify(initial)); } catch (_) {}
       return initial;
     }
-    // Pastikan property settings baru tidak undefined jika memuat dari storage lama
-    if (parsed.settings) {
-      if (parsed.settings.schoolLogo === undefined) parsed.settings.schoolLogo = '';
-      if (parsed.settings.schoolLogoText === undefined) parsed.settings.schoolLogoText = 'DP';
-      if (parsed.settings.schoolPhone === undefined) parsed.settings.schoolPhone = '(021) 7891234';
-      if (parsed.settings.schoolEmail === undefined) parsed.settings.schoolEmail = 'info@smpdyahpithaloka.sch.id';
+
+    // Pastikan seluruh struktur data lengkap & tidak undefined
+    if (!parsed.settings || typeof parsed.settings !== 'object') parsed.settings = initial.settings;
+    if (!parsed.settings.theme || typeof parsed.settings.theme !== 'object') parsed.settings.theme = initial.settings.theme;
+    if (!parsed.settings.schoolName) parsed.settings.schoolName = initial.settings.schoolName;
+    if (parsed.settings.schoolLogo === undefined) parsed.settings.schoolLogo = '';
+    if (parsed.settings.schoolLogoText === undefined) parsed.settings.schoolLogoText = 'DP';
+    if (parsed.settings.schoolPhone === undefined) parsed.settings.schoolPhone = '(021) 7891234';
+    if (parsed.settings.schoolEmail === undefined) parsed.settings.schoolEmail = 'info@smpdyahpithaloka.sch.id';
+
+    if (!Array.isArray(parsed.rombels) || parsed.rombels.length === 0) parsed.rombels = initial.rombels;
+    if (!Array.isArray(parsed.students)) parsed.students = initial.students;
+    if (!Array.isArray(parsed.teachers)) parsed.teachers = initial.teachers;
+    if (!Array.isArray(parsed.users) || !parsed.users.some(u => u && (u.role === 'superadmin' || u.role === 'admin'))) {
+      parsed.users = initial.users;
     }
+
+    if (!parsed.studentAttendance || typeof parsed.studentAttendance !== 'object') parsed.studentAttendance = {};
+    if (!parsed.teacherAttendance || typeof parsed.teacherAttendance !== 'object') parsed.teacherAttendance = {};
+    if (!parsed.piketLogs || typeof parsed.piketLogs !== 'object') parsed.piketLogs = {};
 
     // Jalankan auto-cleanup saat memuat data
     const cleanupResult = cleanupExpiredData(parsed);
@@ -396,7 +410,7 @@ function loadDatabase() {
     return parsed;
   } catch (e) {
     console.error('Gagal memuat database lokal, membuat ulang:', e);
-    return createInitialData();
+    return initial;
   }
 }
 
@@ -416,8 +430,10 @@ function saveDatabase(syncToFirebase = true) {
 }
 
 function applyThemeToDOM() {
+  if (!db || !db.settings) return;
   const t = db.settings.theme || {};
   const root = document.documentElement;
+  if (!root) return;
   if (t.maroon) root.style.setProperty('--color-maroon', t.maroon);
   if (t.maroonDark) root.style.setProperty('--color-maroon-dark', t.maroonDark);
   if (t.gold) root.style.setProperty('--color-gold', t.gold);
@@ -536,31 +552,55 @@ function handleLogout(isAutoIdle = false) {
 // RENDER DISPATCHER
 // ============================================================================
 function renderApp() {
-  applyThemeToDOM();
   const root = document.getElementById('app');
   if (!root) return;
 
-  if (!state.currentUser) {
-    root.innerHTML = renderLoginScreen();
-    bindLoginEvents();
-    return;
-  }
+  try {
+    applyThemeToDOM();
 
-  root.innerHTML = `
-    <div class="app-shell">
-      <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
-      ${renderSidebar()}
-      <div class="main-area">
-        ${renderTopbar()}
-        <div class="content-container">
-          ${renderMainView()}
+    if (!state.currentUser) {
+      root.innerHTML = renderLoginScreen();
+      bindLoginEvents();
+      return;
+    }
+
+    root.innerHTML = `
+      <div class="app-shell">
+        <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
+        ${renderSidebar()}
+        <div class="main-area">
+          ${renderTopbar()}
+          <div class="content-container">
+            ${renderMainView()}
+          </div>
         </div>
       </div>
-    </div>
-    ${renderModalDialog()}
-  `;
-  bindMainEvents();
-  bindModalEvents();
+      ${renderModalDialog()}
+    `;
+    bindMainEvents();
+    bindModalEvents();
+  } catch (err) {
+    console.error('CRITICAL ERROR in renderApp():', err);
+    root.innerHTML = `
+      <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#F8F6F4;padding:24px;font-family:'Plus Jakarta Sans',sans-serif;">
+        <div style="max-width:480px;width:100%;background:#fff;border-radius:12px;border:2px solid #7A0C1E;box-shadow:0 10px 25px rgba(0,0,0,0.15);padding:32px;text-align:center;">
+          <div style="font-size:2.8rem;margin-bottom:12px;">⚠️</div>
+          <h3 style="color:#7A0C1E;margin-bottom:8px;font-size:1.25rem;">Pemulihan Tampilan Aplikasi</h3>
+          <p style="color:#666;font-size:0.86rem;margin-bottom:20px;line-height:1.5;">
+            Terjadi kendala saat menyegarkan data tampilan: <em>${escapeHtml(err && err.message ? err.message : String(err))}</em>
+          </p>
+          <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;">
+            <button type="button" onclick="localStorage.removeItem('${SESSION_KEY}');location.reload();" style="padding:10px 18px;background:#7A0C1E;color:#fff;border:none;border-radius:6px;font-weight:700;cursor:pointer;">
+              🔄 Masuk Ulang Akun
+            </button>
+            <button type="button" onclick="location.reload();" style="padding:10px 18px;background:#D4AF37;color:#121214;border:none;border-radius:6px;font-weight:700;cursor:pointer;">
+              Muat Ulang Halaman
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
 }
 
 // ============================================================================
@@ -643,8 +683,8 @@ function bindLoginEvents() {
 // SIDEBAR & TOPBAR
 // ============================================================================
 function renderSidebar() {
-  const s = db.settings;
-  const u = state.currentUser;
+  const s = (db && db.settings) || {};
+  const u = state.currentUser || {};
   const isSuper = isAdminUser(u);
 
   return `
@@ -661,8 +701,8 @@ function renderSidebar() {
 
         <div class="active-piket-card">
           <span class="piket-badge">${isSuper ? 'ADMINISTRATOR AKTIF' : 'GURU PIKET BERTUGAS'}</span>
-          <div class="piket-name">${escapeHtml(u.name)}</div>
-          <div class="piket-role">Akun: @${escapeHtml(u.username)} • ${escapeHtml(u.jadwalPiket || 'Piket Harian')}</div>
+          <div class="piket-name">${escapeHtml(u.name || 'Petugas')}</div>
+          <div class="piket-role">Akun: @${escapeHtml(u.username || '-')} • ${escapeHtml(u.jadwalPiket || 'Piket Harian')}</div>
         </div>
 
         <nav class="nav-menu">
@@ -709,10 +749,12 @@ function renderSidebar() {
 }
 
 function renderTopbar() {
-  const s = db.settings;
+  const s = (db && db.settings) || {};
   const hasSheet = Boolean(s.spreadsheetViewUrl || s.spreadsheetWebhookUrl);
-  const piketToday = db.piketLogs[state.selectedDate];
+  const piketLogs = (db && db.piketLogs) || {};
+  const piketToday = piketLogs[state.selectedDate];
   const fbConnected = Boolean(window.FirebaseBridge && window.FirebaseBridge.status === 'connected');
+  const u = state.currentUser || {};
 
   return `
     <header class="topbar">
@@ -726,7 +768,7 @@ function renderTopbar() {
           <h1>${escapeHtml(s.schoolName)} — Tahun Ajaran ${escapeHtml(s.academicYear)}</h1>
           <p>
             Petugas Piket Tanggal <strong>${escapeHtml(formatDateID(state.selectedDate))}</strong>:
-            <strong>${piketToday ? escapeHtml(piketToday.name) + ' (@' + escapeHtml(piketToday.username) + ')' : escapeHtml(state.currentUser.name)}</strong>
+            <strong>${piketToday ? escapeHtml(piketToday.name) + ' (@' + escapeHtml(piketToday.username) + ')' : escapeHtml(u.name || 'Petugas Piket')}</strong>
           </p>
         </div>
       </div>
@@ -741,8 +783,6 @@ function renderTopbar() {
         <div class="date-pill">📅 ${escapeHtml(formatDateID(state.selectedDate))}</div>
       </div>
     </header>
-  `;
-}
   `;
 }
 
@@ -788,14 +828,21 @@ function renderMainView() {
 // 1. DASHBOARD VIEW
 // ============================================================================
 function renderDashboardView() {
-  const dt = state.selectedDate;
-  const stuDay = db.studentAttendance[dt] || {};
-  const tchDay = db.teacherAttendance[dt] || {};
+  const dt = state.selectedDate || getTodayISO();
+  const stuAttendance = (db && db.studentAttendance) || {};
+  const tchAttendance = (db && db.teacherAttendance) || {};
+  const piketLogs = (db && db.piketLogs) || {};
+  const students = (db && db.students) || [];
+  const teachers = (db && db.teachers) || [];
+  const rombels = (db && db.rombels) || [];
+
+  const stuDay = stuAttendance[dt] || {};
+  const tchDay = tchAttendance[dt] || {};
 
   // Hitung data kehadiran siswa (Hanya yang benar-benar telah diinput oleh guru piket)
   let stuH = 0, stuI = 0, stuS = 0, stuA = 0;
   let stuRecorded = 0;
-  db.students.forEach(s => {
+  students.forEach(s => {
     const rec = stuDay[s.id];
     if (rec && rec.status) {
       stuRecorded++;
@@ -809,7 +856,7 @@ function renderDashboardView() {
   // Hitung data kehadiran guru (Hanya yang benar-benar telah diinput oleh guru piket)
   let tchH = 0, tchI = 0, tchS = 0, tchA = 0;
   let tchRecorded = 0;
-  db.teachers.forEach(t => {
+  teachers.forEach(t => {
     const rec = tchDay[t.id];
     if (rec && rec.status) {
       tchRecorded++;
@@ -824,20 +871,21 @@ function renderDashboardView() {
   const hasTchInput = tchRecorded > 0;
 
   // Jika belum ada input, persentase adalah nihil (0%)
-  const stuPct = hasStuInput && db.students.length ? Math.round((stuH / db.students.length) * 100) : 0;
-  const tchPct = hasTchInput && db.teachers.length ? Math.round((tchH / db.teachers.length) * 100) : 0;
+  const stuPct = hasStuInput && students.length ? Math.round((stuH / students.length) * 100) : 0;
+  const tchPct = hasTchInput && teachers.length ? Math.round((tchH / teachers.length) * 100) : 0;
 
   // Daftar siswa/guru yang Izin atau Sakit hari ini (hanya jika sudah diinput)
-  const absentStudents = db.students
+  const absentStudents = students
     .filter(s => stuDay[s.id] && stuDay[s.id].status && stuDay[s.id].status !== 'H')
     .map(s => ({ ...s, ...stuDay[s.id] }));
 
-  const absentTeachers = db.teachers
+  const absentTeachers = teachers
     .filter(t => tchDay[t.id] && tchDay[t.id].status && tchDay[t.id].status !== 'H')
     .map(t => ({ ...t, ...tchDay[t.id] }));
 
-  const piketInfo = db.piketLogs[dt];
+  const piketInfo = piketLogs[dt];
   const hasPiketActivity = Boolean(piketInfo && (hasStuInput || hasTchInput || piketInfo.note));
+  const currUser = state.currentUser || { name: 'Guru Piket', username: 'piket' };
 
   return `
     <div class="toolbar">
@@ -875,15 +923,15 @@ function renderDashboardView() {
       </div>
       <div class="stat-card black-accent">
         <span class="stat-label">Guru Piket Bertugas</span>
-        <div class="stat-value" style="font-size:1.25rem;line-height:1.3;">${piketInfo ? escapeHtml(piketInfo.name) : escapeHtml(state.currentUser.name)}</div>
+        <div class="stat-value" style="font-size:1.25rem;line-height:1.3;">${piketInfo ? escapeHtml(piketInfo.name) : escapeHtml(currUser.name)}</div>
         <div class="stat-meta">
-          Akun: @${piketInfo ? escapeHtml(piketInfo.username) : escapeHtml(state.currentUser.username)} • ${hasPiketActivity ? `Update: ${escapeHtml(piketInfo.lastUpdated || piketInfo.loginTime)}` : '<span style="color:var(--color-gold);">Menunggu input kehadiran hari ini</span>'}
+          Akun: @${piketInfo ? escapeHtml(piketInfo.username) : escapeHtml(currUser.username)} • ${hasPiketActivity ? `Update: ${escapeHtml(piketInfo.lastUpdated || piketInfo.loginTime)}` : '<span style="color:var(--color-gold);">Menunggu input kehadiran hari ini</span>'}
         </div>
       </div>
       <div class="stat-card">
         <span class="stat-label">Total Rombel Aktif</span>
-        <div class="stat-value">${db.rombels.length} Kelas</div>
-        <div class="stat-meta">${db.rombels.join(', ')}</div>
+        <div class="stat-value">${rombels.length} Kelas</div>
+        <div class="stat-meta">${rombels.join(', ')}</div>
       </div>
     </div>
 
@@ -896,8 +944,8 @@ function renderDashboardView() {
           </div>
         </div>
         <div class="panel-body">
-          ${db.rombels.map(rombel => {
-            const list = db.students.filter(s => s.rombel === rombel);
+          ${rombels.map(rombel => {
+            const list = students.filter(s => s.rombel === rombel);
             const total = list.length || 1;
             let h = 0, i = 0, s = 0, a = 0;
             let rRecorded = 0;
@@ -1709,7 +1757,14 @@ function renderSuperadminView() {
 }
 
 function renderSuperThemeTab() {
-  const t = db.settings.theme;
+  const t = (db && db.settings && db.settings.theme) || {
+    preset: 'classic-maroon-gold',
+    maroon: '#7A0C1E',
+    gold: '#D4AF37',
+    black: '#121214',
+    bg: '#F8F6F4',
+    surface: '#FFFFFF'
+  };
   return `
     <h4 style="color:var(--color-maroon);margin-bottom:12px;">1. Pilih Preset Perpaduan Warna Maroon, Putih, Gold, dan Hitam</h4>
     <div class="theme-presets">
@@ -3668,12 +3723,18 @@ function escapeHtml(str) {
     .replace(/'/g, '&#039;');
 }
 
-// Jalankan aplikasi saat DOM siap
-document.addEventListener('DOMContentLoaded', () => {
+// Jalankan aplikasi saat DOM siap (atau langsung jika DOM sudah selesai diparsing saat refresh)
+function startApp() {
   renderApp();
   initFirebaseSync();
   initIdleTimer();
-});
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', startApp);
+} else {
+  startApp();
+}
 
 // Listener saat Firebase siap
 window.addEventListener('firebase-ready', () => {
@@ -3740,6 +3801,15 @@ function initFirebaseSync() {
         hasOldSeed = true;
       }
 
+      const initialDefaults = createInitialData();
+      if (!Array.isArray(cloudData.rombels) || cloudData.rombels.length === 0) cloudData.rombels = initialDefaults.rombels;
+      if (!Array.isArray(cloudData.students)) cloudData.students = [];
+      if (!Array.isArray(cloudData.teachers)) cloudData.teachers = [];
+      if (!cloudData.studentAttendance || typeof cloudData.studentAttendance !== 'object') cloudData.studentAttendance = {};
+      if (!cloudData.teacherAttendance || typeof cloudData.teacherAttendance !== 'object') cloudData.teacherAttendance = {};
+      if (!cloudData.piketLogs || typeof cloudData.piketLogs !== 'object') cloudData.piketLogs = {};
+      if (!cloudData.settings.theme) cloudData.settings.theme = initialDefaults.settings.theme;
+
       db = cloudData;
       // Jika ada data kadaluarsa atau dummy seed yang dibersihkan di cloud, simpan versi bersih kembali ke Firebase
       if (cleanupCloud.piketRemoved > 0 || cleanupCloud.attendanceRemoved > 0 || hasOldSeed) {
@@ -3749,7 +3819,7 @@ function initFirebaseSync() {
       }
       // Sinkronkan ulang data currentUser dengan data user terbaru dari cloud
       if (state.currentUser) {
-        const refreshedUser = db.users.find(u => u.username.toLowerCase() === state.currentUser.username.toLowerCase());
+        const refreshedUser = db.users.find(u => u && u.username && u.username.toLowerCase() === state.currentUser.username.toLowerCase());
         if (refreshedUser) state.currentUser = refreshedUser;
       }
       renderApp();
@@ -3771,8 +3841,17 @@ function initFirebaseSync() {
 
   // Pasang listener real-time
   window.FirebaseBridge.listenToCloud(cloudData => {
-    if (cloudData && cloudData.users && cloudData.settings) {
+    if (cloudData && Array.isArray(cloudData.users) && cloudData.settings) {
       cleanupExpiredData(cloudData);
+      const initialDefaults = createInitialData();
+      if (!Array.isArray(cloudData.rombels) || cloudData.rombels.length === 0) cloudData.rombels = initialDefaults.rombels;
+      if (!Array.isArray(cloudData.students)) cloudData.students = [];
+      if (!Array.isArray(cloudData.teachers)) cloudData.teachers = [];
+      if (!cloudData.studentAttendance || typeof cloudData.studentAttendance !== 'object') cloudData.studentAttendance = {};
+      if (!cloudData.teacherAttendance || typeof cloudData.teacherAttendance !== 'object') cloudData.teacherAttendance = {};
+      if (!cloudData.piketLogs || typeof cloudData.piketLogs !== 'object') cloudData.piketLogs = {};
+      if (!cloudData.settings.theme) cloudData.settings.theme = initialDefaults.settings.theme;
+
       db = cloudData;
       saveDatabase(false);
       renderApp();
