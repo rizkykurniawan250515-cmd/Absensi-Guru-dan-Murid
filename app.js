@@ -473,7 +473,7 @@ function handleLogin(username, password) {
   });
 
   if (!user) {
-    showToast('Username atau password tidak sesuai! Gunakan username: superadmin dan password: 123');
+    showToast('Username atau password tidak sesuai! Silakan periksa kembali data login Anda.');
     return;
   }
 
@@ -590,16 +590,10 @@ function renderLoginScreen() {
             </p>
           </div>
 
-          <div class="login-Demo-box">
-            <h4>Klik Akun Demo Cepat (Password: 123)</h4>
-            <div class="demo-acc-list">
-              ${db.users.map(u => `
-                <button type="button" class="demo-acc-btn" data-demo-user="${escapeHtml(u.username)}" data-demo-pass="${escapeHtml(u.password)}">
-                  <span><strong>${escapeHtml(u.name)}</strong> (${u.role === 'superadmin' ? 'Superadmin' : 'Guru Piket'})</span>
-                  <span>@${escapeHtml(u.username)}</span>
-                </button>
-              `).join('')}
-            </div>
+          <div style="margin-top:auto;padding-top:24px;border-top:1px solid rgba(212,175,55,0.3);font-size:0.85rem;color:rgba(255,255,255,0.85);">
+            <div><strong>Tahun Ajaran:</strong> ${escapeHtml(s.academicYear)} (${escapeHtml(s.semester)})</div>
+            <div><strong>Kepala Sekolah:</strong> ${escapeHtml(s.headmasterName)}</div>
+            ${s.schoolAddress ? `<div style="margin-top:4px;font-size:0.8rem;color:rgba(255,255,255,0.7);">${escapeHtml(s.schoolAddress)}</div>` : ''}
           </div>
         </div>
 
@@ -610,30 +604,21 @@ function renderLoginScreen() {
           <form id="login-form">
             <div class="form-group">
               <label for="login-username">Username Akun</label>
-              <input id="login-username" type="text" class="form-control" placeholder="Ketik: superadmin atau piket1" required />
+              <input id="login-username" type="text" class="form-control" placeholder="Masukkan username akun Anda" required autocomplete="username" />
             </div>
             <div class="form-group">
               <label for="login-password">Kata Sandi / Password</label>
-              <input id="login-password" type="password" class="form-control" placeholder="Ketik: 123 atau superadmin" required />
+              <input id="login-password" type="password" class="form-control" placeholder="Masukkan kata sandi akun" required autocomplete="current-password" />
             </div>
-            <div class="form-group" style="margin-top: 20px; display: flex; flex-direction: column; gap: 10px;">
-              <button type="submit" class="btn btn-maroon" style="width: 100%; padding: 12px;">
+            <div class="form-group" style="margin-top:24px;">
+              <button type="submit" class="btn btn-maroon" style="width:100%;padding:13px;font-size:0.95rem;font-weight:700;">
                 🔐 Masuk & Catat Petugas Piket Hari Ini
-              </button>
-              <button type="button" id="btn-quick-superadmin" class="btn btn-gold" style="width: 100%; padding: 11px;">
-                👑 Masuk Langsung sebagai Superadmin (1-Klik)
               </button>
             </div>
           </form>
 
-          <div style="margin-top: 14px; padding: 10px 12px; background: var(--color-bg); border: 1px solid var(--color-border); border-radius: 8px; font-size: 0.8rem; color: var(--color-text);">
-            <div><strong>Info Login Superadmin:</strong> Username: <code>superadmin</code> | Password: <code>123</code> (atau <code>superadmin</code>)</div>
-            <div><strong>Info Login Guru Piket:</strong> Username: <code>piket1</code>, <code>piket2</code>, <code>piket3</code> | Password: <code>123</code></div>
-          </div>
-
-          <div style="margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--color-border); font-size: 0.82rem; color: var(--color-text-muted);">
-            <div><strong>Tahun Ajaran:</strong> ${escapeHtml(s.academicYear)} (${escapeHtml(s.semester)})</div>
-            <div><strong>Kepala Sekolah:</strong> ${escapeHtml(s.headmasterName)}</div>
+          <div style="margin-top:24px;padding-top:14px;border-top:1px solid var(--color-border);font-size:0.82rem;color:var(--color-text-muted);text-align:center;">
+            &copy; ${escapeHtml(s.schoolName)} • Kehadiran Terpadu Guru & Siswa
           </div>
         </div>
       </div>
@@ -651,21 +636,6 @@ function bindLoginEvents() {
       handleLogin(u, p);
     });
   }
-
-  const quickSuperBtn = document.getElementById('btn-quick-superadmin');
-  if (quickSuperBtn) {
-    quickSuperBtn.addEventListener('click', () => {
-      handleLogin('superadmin', '123');
-    });
-  }
-
-  document.querySelectorAll('[data-demo-user]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const u = btn.getAttribute('data-demo-user');
-      const p = btn.getAttribute('data-demo-pass');
-      handleLogin(u, p);
-    });
-  });
 }
 
 // ============================================================================
