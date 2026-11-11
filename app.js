@@ -755,6 +755,7 @@ function renderTopbar() {
   const piketToday = piketLogs[state.selectedDate];
   const fbConnected = Boolean(window.FirebaseBridge && window.FirebaseBridge.status === 'connected');
   const u = state.currentUser || {};
+  const isSuper = isAdminUser(u);
 
   return `
     <header class="topbar">
@@ -773,13 +774,15 @@ function renderTopbar() {
         </div>
       </div>
       <div class="topbar-right">
-        <div class="sheet-status-pill ${fbConnected ? 'connected' : ''}" title="Database Firebase Firestore Real-Time Cloud">
-          <span>🔥 ${fbConnected ? 'Firebase Cloud Aktif' : 'Firebase Ready'}</span>
-        </div>
-        <div class="sheet-status-pill ${hasSheet ? 'connected' : ''}">
-          <span>${hasSheet ? '🟢 Spreadsheet Tertaut' : '⚪ Spreadsheet Belum Ditautkan'}</span>
-          ${s.spreadsheetViewUrl ? `<a href="${escapeHtml(s.spreadsheetViewUrl)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;margin-left:4px;">Buka Sheet</a>` : ''}
-        </div>
+        ${isSuper ? `
+          <div class="sheet-status-pill ${fbConnected ? 'connected' : ''}" title="Database Firebase Firestore Real-Time Cloud">
+            <span>🔥 ${fbConnected ? 'Firebase Cloud Aktif' : 'Firebase Ready'}</span>
+          </div>
+          <div class="sheet-status-pill ${hasSheet ? 'connected' : ''}">
+            <span>${hasSheet ? '🟢 Spreadsheet Tertaut' : '⚪ Spreadsheet Belum Ditautkan'}</span>
+            ${s.spreadsheetViewUrl ? `<a href="${escapeHtml(s.spreadsheetViewUrl)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;margin-left:4px;">Buka Sheet</a>` : ''}
+          </div>
+        ` : ''}
         <div class="date-pill">📅 ${escapeHtml(formatDateID(state.selectedDate))}</div>
       </div>
     </header>
