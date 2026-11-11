@@ -199,7 +199,7 @@ function createInitialData() {
     { username: 'piket3', name: 'Bagus Pratama, S.Kom', role: 'Guru Piket' }
   ];
 
-  for (let offset = -4; offset <= 0; offset++) {
+  for (let offset = -4; offset <= -1; offset++) {
     const dt = addDaysISO(today, offset);
     const piketOfficer = samplePiket[Math.abs(offset) % samplePiket.length];
 
@@ -210,9 +210,7 @@ function createInitialData() {
       role: piketOfficer.role,
       loginTime: '07:05 WIB',
       lastUpdated: '07:45 WIB',
-      note: offset === 0
-        ? 'Kegiatan KBM berjalan tertib dan lancar.'
-        : 'Seluruh rombel telah diperiksa kehadirannya oleh guru piket.',
+      note: 'Seluruh rombel telah diperiksa kehadirannya oleh guru piket.',
       syncedToSheet: false
     };
 
@@ -329,11 +327,16 @@ function getStoredSessionUser() {
   return null;
 }
 
+function isAdminUser(u) {
+  if (!u) return false;
+  return u.role === 'superadmin' || u.role === 'admin';
+}
+
 let db = loadDatabase();
 const initialUser = getStoredSessionUser();
 let state = {
   currentUser: initialUser,
-  activeMenu: initialUser ? (initialUser.role === 'superadmin' ? 'superadmin' : 'dashboard') : 'dashboard',
+  activeMenu: initialUser ? (isAdminUser(initialUser) ? 'superadmin' : 'dashboard') : 'dashboard',
   selectedDate: getTodayISO(),
   selectedRombel: db.rombels[0] || 'VII-A',
   daftarRombel: 'ALL',
@@ -378,6 +381,15 @@ function loadDatabase() {
     const cleanupResult = cleanupExpiredData(parsed);
     if (cleanupResult.piketRemoved > 0 || cleanupResult.attendanceRemoved > 0) {
       console.log(`Auto-cleanup executed: ${cleanupResult.piketRemoved} old piket log(s) & ${cleanupResult.attendanceRemoved} attendance day(s) (>2 bulan) removed.`);
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed)); } catch (_) {}
+    }
+
+    // Bersihkan sample dummy seed hari ini jika ada (agar hari ini selalu nihil sampai diinput guru piket)
+    const todayStr = getTodayISO();
+    if (parsed.piketLogs && parsed.piketLogs[todayStr] && parsed.piketLogs[todayStr].note === 'Kegiatan KBM berjalan tertib dan lancar.') {
+      delete parsed.piketLogs[todayStr];
+      if (parsed.studentAttendance) delete parsed.studentAttendance[todayStr];
+      if (parsed.teacherAttendance) delete parsed.teacherAttendance[todayStr];
       try { localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed)); } catch (_) {}
     }
 
@@ -466,7 +478,7 @@ function handleLogin(username, password) {
   }
 
   state.currentUser = user;
-  state.activeMenu = user.role === 'superadmin' ? 'superadmin' : 'dashboard';
+  state.activeMenu = isAdminUser(user) ? 'superadmin' : 'dashboard';
 
   // Simpan sesi login aktif ke browser agar saat di-refresh tidak ter-logout
   try {
@@ -662,7 +674,7 @@ function bindLoginEvents() {
 function renderSidebar() {
   const s = db.settings;
   const u = state.currentUser;
-  const isSuper = u && u.role === 'superadmin';
+  const isSuper = isAdminUser(u);
 
   return `
     <aside class="sidebar">
@@ -676,7 +688,7 @@ function renderSidebar() {
         </div>
 
         <div class="active-piket-card">
-          <span class="piket-badge">${isSuper ? 'SUPERADMIN AKTIF' : 'GURU PIKET BERTUGAS'}</span>
+          <span class="piket-badge">${isSuper ? 'ADMINISTRATOR AKTIF' : 'GURU PIKET BERTUGAS'}</span>
           <div class="piket-name">${escapeHtml(u.name)}</div>
           <div class="piket-role">Akun: @${escapeHtml(u.username)} • ${escapeHtml(u.jadwalPiket || 'Piket Harian')}</div>
         </div>
@@ -698,10 +710,12 @@ function renderSidebar() {
             <span class="nav-icon">👨‍🏫</span>
             <span>Absen Dewan Guru</span>
           </button>
-          <button class="nav-btn ${state.activeMenu === 'rekap' ? 'active' : ''}" data-nav="rekap">
-            <span class="nav-icon">📅</span>
-            <span>Rekap Mingguan & Bulanan</span>
-          </button>
+          ${isSuper ? `
+            <button class="nav-btn ${state.activeMenu === 'rekap' ? 'active' : ''}" data-nav="rekap">
+              <span class="nav-icon">📅</span>
+              <span>Rekap Mingguan & Bulanan</span>
+            </button>
+          ` : ''}
           <button class="nav-btn ${state.activeMenu === 'log-piket' ? 'active' : ''}" data-nav="log-piket">
             <span class="nav-icon">📝</span>
             <span>Catatan Guru Piket</span>
@@ -751,6 +765,19 @@ function renderTopbar() {
   `;
 }
 
+function renderAccessDeniedView(menuTitle = 'Halaman ini') {
+  return `
+    <div class="panel-card" style="text-align:center;padding:56px 20px;">
+      <div style="font-size:3.5rem;margin-bottom:16px;">🔒</div>
+      <h3 style="color:var(--color-maroon);font-size:1.35rem;margin-bottom:10px;">Akses Terbatas (Khusus Administrator)</h3>
+      <p style="color:var(--color-text-muted);max-width:520px;margin:0 auto 24px auto;font-size:0.95rem;line-height:1.6;">
+        ${escapeHtml(menuTitle)} dilindungi dan hanya dapat diakses oleh akun <strong>Admin / Superadmin</strong>. Silakan masuk menggunakan akun Administrator untuk mengelola atau mengunduh data rekapitulasi.
+      </p>
+      <button type="button" class="btn btn-maroon" data-goto="dashboard">← Kembali ke Dashboard</button>
+    </div>
+  `;
+}
+
 function renderMainView() {
   switch (state.activeMenu) {
     case 'dashboard':
@@ -762,11 +789,13 @@ function renderMainView() {
     case 'absen-guru':
       return renderTeacherAttendanceView();
     case 'rekap':
-      return renderRekapView();
+      return isAdminUser(state.currentUser)
+        ? renderRekapView()
+        : renderAccessDeniedView('Menu Rekapitulasi Mingguan & Bulanan');
     case 'log-piket':
       return renderPiketLogView();
     case 'superadmin':
-      return state.currentUser.role === 'superadmin'
+      return isAdminUser(state.currentUser)
         ? renderSuperadminView()
         : renderDashboardView();
     default:
@@ -782,37 +811,52 @@ function renderDashboardView() {
   const stuDay = db.studentAttendance[dt] || {};
   const tchDay = db.teacherAttendance[dt] || {};
 
+  // Hitung data kehadiran siswa (Hanya yang benar-benar telah diinput oleh guru piket)
   let stuH = 0, stuI = 0, stuS = 0, stuA = 0;
+  let stuRecorded = 0;
   db.students.forEach(s => {
     const rec = stuDay[s.id];
-    if (!rec || rec.status === 'H') stuH++;
-    else if (rec.status === 'I') stuI++;
-    else if (rec.status === 'S') stuS++;
-    else if (rec.status === 'A') stuA++;
+    if (rec && rec.status) {
+      stuRecorded++;
+      if (rec.status === 'H') stuH++;
+      else if (rec.status === 'I') stuI++;
+      else if (rec.status === 'S') stuS++;
+      else if (rec.status === 'A') stuA++;
+    }
   });
 
+  // Hitung data kehadiran guru (Hanya yang benar-benar telah diinput oleh guru piket)
   let tchH = 0, tchI = 0, tchS = 0, tchA = 0;
+  let tchRecorded = 0;
   db.teachers.forEach(t => {
     const rec = tchDay[t.id];
-    if (!rec || rec.status === 'H') tchH++;
-    else if (rec.status === 'I') tchI++;
-    else if (rec.status === 'S') tchS++;
-    else if (rec.status === 'A') tchA++;
+    if (rec && rec.status) {
+      tchRecorded++;
+      if (rec.status === 'H') tchH++;
+      else if (rec.status === 'I') tchI++;
+      else if (rec.status === 'S') tchS++;
+      else if (rec.status === 'A') tchA++;
+    }
   });
 
-  const stuPct = db.students.length ? Math.round((stuH / db.students.length) * 100) : 0;
-  const tchPct = db.teachers.length ? Math.round((tchH / db.teachers.length) * 100) : 0;
+  const hasStuInput = stuRecorded > 0;
+  const hasTchInput = tchRecorded > 0;
 
-  // Daftar siswa/guru yang Izin atau Sakit hari ini
+  // Jika belum ada input, persentase adalah nihil (0%)
+  const stuPct = hasStuInput && db.students.length ? Math.round((stuH / db.students.length) * 100) : 0;
+  const tchPct = hasTchInput && db.teachers.length ? Math.round((tchH / db.teachers.length) * 100) : 0;
+
+  // Daftar siswa/guru yang Izin atau Sakit hari ini (hanya jika sudah diinput)
   const absentStudents = db.students
-    .filter(s => stuDay[s.id] && stuDay[s.id].status !== 'H')
+    .filter(s => stuDay[s.id] && stuDay[s.id].status && stuDay[s.id].status !== 'H')
     .map(s => ({ ...s, ...stuDay[s.id] }));
 
   const absentTeachers = db.teachers
-    .filter(t => tchDay[t.id] && tchDay[t.id].status !== 'H')
+    .filter(t => tchDay[t.id] && tchDay[t.id].status && tchDay[t.id].status !== 'H')
     .map(t => ({ ...t, ...tchDay[t.id] }));
 
   const piketInfo = db.piketLogs[dt];
+  const hasPiketActivity = Boolean(piketInfo && (hasStuInput || hasTchInput || piketInfo.note));
 
   return `
     <div class="toolbar">
@@ -832,18 +876,28 @@ function renderDashboardView() {
     <div class="stats-grid">
       <div class="stat-card">
         <span class="stat-label">Kehadiran Siswa Hari Ini</span>
-        <div class="stat-value">${stuPct}%</div>
-        <div class="stat-meta">Hadir: ${stuH} | Izin: ${stuI} | Sakit: ${stuS} | Alpha: ${stuA} (Total ${db.students.length} Siswa)</div>
+        <div class="stat-value" style="${!hasStuInput ? 'color:var(--color-text-muted);' : ''}">${hasStuInput ? `${stuPct}%` : '0%'}</div>
+        <div class="stat-meta">
+          ${hasStuInput
+            ? `Hadir: ${stuH} | Izin: ${stuI} | Sakit: ${stuS} | Alpha: ${stuA} (Tercatat: ${stuRecorded}/${db.students.length} Siswa)`
+            : `<span style="color:#B91C1C;font-weight:700;">Belum Diinput (Nihil / 0)</span> • Total ${db.students.length} Siswa`}
+        </div>
       </div>
       <div class="stat-card gold-accent">
         <span class="stat-label">Kehadiran Guru Hari Ini</span>
-        <div class="stat-value">${tchPct}%</div>
-        <div class="stat-meta">Hadir: ${tchH} | Izin: ${tchI} | Sakit: ${tchS} | Alpha: ${tchA} (Total ${db.teachers.length} Guru)</div>
+        <div class="stat-value" style="${!hasTchInput ? 'color:var(--color-text-muted);' : ''}">${hasTchInput ? `${tchPct}%` : '0%'}</div>
+        <div class="stat-meta">
+          ${hasTchInput
+            ? `Hadir: ${tchH} | Izin: ${tchI} | Sakit: ${tchS} | Alpha: ${tchA} (Tercatat: ${tchRecorded}/${db.teachers.length} Guru)`
+            : `<span style="color:#B91C1C;font-weight:700;">Belum Diinput (Nihil / 0)</span> • Total ${db.teachers.length} Guru`}
+        </div>
       </div>
       <div class="stat-card black-accent">
         <span class="stat-label">Guru Piket Bertugas</span>
         <div class="stat-value" style="font-size:1.25rem;line-height:1.3;">${piketInfo ? escapeHtml(piketInfo.name) : escapeHtml(state.currentUser.name)}</div>
-        <div class="stat-meta">Akun Login: @${piketInfo ? escapeHtml(piketInfo.username) : escapeHtml(state.currentUser.username)} • Update: ${piketInfo ? escapeHtml(piketInfo.lastUpdated) : 'Baru saja'}</div>
+        <div class="stat-meta">
+          Akun: @${piketInfo ? escapeHtml(piketInfo.username) : escapeHtml(state.currentUser.username)} • ${hasPiketActivity ? `Update: ${escapeHtml(piketInfo.lastUpdated || piketInfo.loginTime)}` : '<span style="color:var(--color-gold);">Menunggu input kehadiran hari ini</span>'}
+        </div>
       </div>
       <div class="stat-card">
         <span class="stat-label">Total Rombel Aktif</span>
@@ -865,26 +919,34 @@ function renderDashboardView() {
             const list = db.students.filter(s => s.rombel === rombel);
             const total = list.length || 1;
             let h = 0, i = 0, s = 0, a = 0;
+            let rRecorded = 0;
             list.forEach(st => {
               const stRec = stuDay[st.id];
-              const code = stRec ? stRec.status : 'H';
-              if (code === 'H') h++;
-              else if (code === 'I') i++;
-              else if (code === 'S') s++;
-              else if (code === 'A') a++;
+              if (stRec && stRec.status) {
+                rRecorded++;
+                if (stRec.status === 'H') h++;
+                else if (stRec.status === 'I') i++;
+                else if (stRec.status === 'S') s++;
+                else if (stRec.status === 'A') a++;
+              }
             });
-            const pct = Math.round((h / total) * 100);
+            const hasRombelInput = rRecorded > 0;
+            const pct = hasRombelInput ? Math.round((h / total) * 100) : 0;
             return `
               <div class="bar-row">
                 <div class="bar-label">
                   <span>Kelas ${escapeHtml(rombel)} (${list.length} Siswa)</span>
-                  <span>Hadir ${pct}% (H:${h} I:${i} S:${s} A:${a})</span>
+                  <span>${hasRombelInput ? `Hadir ${pct}% (H:${h} I:${i} S:${s} A:${a})` : '<span class="badge" style="background:#F3F4F6;color:#6B7280;font-size:0.75rem;">Belum Diinput (Nihil / 0%)</span>'}</span>
                 </div>
                 <div class="bar-track">
-                  <div class="bar-fill-h" style="width:${(h / total) * 100}%"></div>
-                  <div class="bar-fill-i" style="width:${(i / total) * 100}%"></div>
-                  <div class="bar-fill-s" style="width:${(s / total) * 100}%"></div>
-                  <div class="bar-fill-a" style="width:${(a / total) * 100}%"></div>
+                  ${hasRombelInput ? `
+                    <div class="bar-fill-h" style="width:${(h / total) * 100}%"></div>
+                    <div class="bar-fill-i" style="width:${(i / total) * 100}%"></div>
+                    <div class="bar-fill-s" style="width:${(s / total) * 100}%"></div>
+                    <div class="bar-fill-a" style="width:${(a / total) * 100}%"></div>
+                  ` : `
+                    <div style="width:100%;height:100%;background:#F3F4F6;border-radius:99px;"></div>
+                  `}
                 </div>
               </div>
             `;
@@ -901,7 +963,15 @@ function renderDashboardView() {
         </div>
         <div class="panel-body">
           <h4 style="color:var(--color-maroon);margin-bottom:8px;font-size:0.9rem;">A. Siswa Tidak Hadir (${absentStudents.length} Siswa)</h4>
-          ${absentStudents.length === 0 ? `<p style="font-size:0.85rem;color:var(--color-text-muted);margin-bottom:16px;">Alhamdulillah, seluruh siswa hadir hari ini.</p>` : `
+          ${!hasStuInput ? `
+            <p style="font-size:0.85rem;color:var(--color-text-muted);margin-bottom:16px;padding:12px 14px;background:#F9FAFB;border-radius:6px;border:1px dashed var(--color-border);">
+              ⚪ Data kehadiran siswa belum diinput oleh Guru Piket untuk tanggal ${escapeHtml(dt)} (Data Nihil / 0).
+            </p>
+          ` : (absentStudents.length === 0 ? `
+            <p style="font-size:0.85rem;color:var(--color-text-muted);margin-bottom:16px;">
+              Alhamdulillah, seluruh siswa yang tercatat hadir hari ini.
+            </p>
+          ` : `
             <div class="table-responsive" style="margin-bottom:18px;">
               <table class="data-table">
                 <thead>
@@ -924,10 +994,18 @@ function renderDashboardView() {
                 </tbody>
               </table>
             </div>
-          `}
+          `)}
 
           <h4 style="color:var(--color-maroon);margin-bottom:8px;font-size:0.9rem;">B. Guru Tidak Hadir (${absentTeachers.length} Guru)</h4>
-          ${absentTeachers.length === 0 ? `<p style="font-size:0.85rem;color:var(--color-text-muted);">Seluruh dewan guru hadir hari ini.</p>` : `
+          ${!hasTchInput ? `
+            <p style="font-size:0.85rem;color:var(--color-text-muted);padding:12px 14px;background:#F9FAFB;border-radius:6px;border:1px dashed var(--color-border);">
+              ⚪ Data kehadiran dewan guru belum diinput oleh Guru Piket untuk tanggal ${escapeHtml(dt)} (Data Nihil / 0).
+            </p>
+          ` : (absentTeachers.length === 0 ? `
+            <p style="font-size:0.85rem;color:var(--color-text-muted);">
+              Seluruh dewan guru yang tercatat hadir hari ini.
+            </p>
+          ` : `
             <div class="table-responsive">
               <table class="data-table">
                 <thead>
@@ -950,7 +1028,7 @@ function renderDashboardView() {
                 </tbody>
               </table>
             </div>
-          `}
+          `)}
         </div>
       </div>
     </div>
@@ -1352,7 +1430,7 @@ function renderRekapView() {
       }
     });
     const totalDays = H + I + S + A;
-    const pct = totalDays > 0 ? Math.round((H / totalDays) * 100) : 100;
+    const pct = totalDays > 0 ? Math.round((H / totalDays) * 100) : 0;
     return {
       ...person,
       H, I, S, A,
@@ -1367,7 +1445,7 @@ function renderRekapView() {
   const totalS = recapRows.reduce((acc, r) => acc + r.S, 0);
   const totalA = recapRows.reduce((acc, r) => acc + r.A, 0);
   const grandTotal = totalH + totalI + totalS + totalA;
-  const avgPct = grandTotal > 0 ? Math.round((totalH / grandTotal) * 100) : 100;
+  const avgPct = grandTotal > 0 ? Math.round((totalH / grandTotal) * 100) : 0;
 
   return `
     <div class="panel-card">
@@ -1484,7 +1562,7 @@ function renderRekapView() {
                   <td style="text-align:center;"><span class="badge badge-S">${r.S}</span></td>
                   <td style="text-align:center;"><span class="badge badge-A">${r.A}</span></td>
                   <td style="text-align:center;"><strong>${r.pct}%</strong></td>
-                  <td style="font-size:0.82rem;color:var(--color-text-muted);">${escapeHtml(r.notesText || 'Hadir penuh')}</td>
+                  <td style="font-size:0.82rem;color:var(--color-text-muted);">${escapeHtml(r.notesText || (r.totalDays > 0 ? 'Hadir penuh' : 'Belum ada input'))}</td>
                 </tr>
               `).join('')}
             </tbody>
@@ -2525,7 +2603,16 @@ function bindMainEvents() {
   // Navigasi Sidebar
   document.querySelectorAll('[data-nav]').forEach(btn => {
     btn.addEventListener('click', () => {
-      state.activeMenu = btn.getAttribute('data-nav');
+      const targetNav = btn.getAttribute('data-nav');
+      if (targetNav === 'rekap' && !isAdminUser(state.currentUser)) {
+        showToast('⚠️ Menu Rekap Mingguan & Bulanan hanya dapat diakses oleh Admin!');
+        return;
+      }
+      if (targetNav === 'superadmin' && !isAdminUser(state.currentUser)) {
+        showToast('⚠️ Menu Pengaturan Superadmin hanya dapat diakses oleh Admin!');
+        return;
+      }
+      state.activeMenu = targetNav;
       renderApp();
     });
   });
@@ -2533,7 +2620,16 @@ function bindMainEvents() {
   // Tombol Pintasan Dashboard
   document.querySelectorAll('[data-goto]').forEach(btn => {
     btn.addEventListener('click', () => {
-      state.activeMenu = btn.getAttribute('data-goto');
+      const targetGoto = btn.getAttribute('data-goto');
+      if (targetGoto === 'rekap' && !isAdminUser(state.currentUser)) {
+        showToast('⚠️ Menu Rekap Mingguan & Bulanan hanya dapat diakses oleh Admin!');
+        return;
+      }
+      if (targetGoto === 'superadmin' && !isAdminUser(state.currentUser)) {
+        showToast('⚠️ Menu Pengaturan Superadmin hanya dapat diakses oleh Admin!');
+        return;
+      }
+      state.activeMenu = targetGoto;
       renderApp();
     });
   });
@@ -3500,6 +3596,10 @@ function downloadDailyCSV(date, studentRecords, teacherRecords) {
 }
 
 function exportCurrentRekapCSV() {
+  if (!isAdminUser(state.currentUser)) {
+    showToast('⚠️ Akses ditolak: Hanya Admin yang dapat mengunduh Rekapitulasi CSV/Excel!');
+    return;
+  }
   const isWeekly = state.rekapTab === 'mingguan';
   const activeDates = isWeekly
     ? getDatesBetween(state.rekapWeekStart, state.rekapWeekEnd)
@@ -3531,7 +3631,7 @@ function exportCurrentRekapCSV() {
       else if (rec.status === 'A') { A++; notes.push(`${d}: Alpha`); }
     });
     const total = H + I + S + A;
-    const pct = total > 0 ? Math.round((H / total) * 100) : 100;
+    const pct = total > 0 ? Math.round((H / total) * 100) : 0;
     lines.push(`${idx + 1},"${isSiswa ? person.nis : person.nip}","${person.name}","${isSiswa ? person.rombel : person.subject}",${H},${I},${S},${A},"${pct}%","${notes.join('; ')}"`);
   });
 
@@ -3624,9 +3724,20 @@ function initFirebaseSync() {
     if (cloudData && cloudData.users && cloudData.settings) {
       // Jalankan auto-cleanup pada data cloud sebelum diterapkan
       const cleanupCloud = cleanupExpiredData(cloudData);
+
+      // Bersihkan sample dummy seed hari ini jika ada di cloud
+      const todayStr = getTodayISO();
+      let hasOldSeed = false;
+      if (cloudData.piketLogs && cloudData.piketLogs[todayStr] && cloudData.piketLogs[todayStr].note === 'Kegiatan KBM berjalan tertib dan lancar.') {
+        delete cloudData.piketLogs[todayStr];
+        if (cloudData.studentAttendance) delete cloudData.studentAttendance[todayStr];
+        if (cloudData.teacherAttendance) delete cloudData.teacherAttendance[todayStr];
+        hasOldSeed = true;
+      }
+
       db = cloudData;
-      // Jika ada data kadaluarsa yang dibersihkan di cloud, simpan versi bersih kembali ke Firebase
-      if (cleanupCloud.piketRemoved > 0 || cleanupCloud.attendanceRemoved > 0) {
+      // Jika ada data kadaluarsa atau dummy seed yang dibersihkan di cloud, simpan versi bersih kembali ke Firebase
+      if (cleanupCloud.piketRemoved > 0 || cleanupCloud.attendanceRemoved > 0 || hasOldSeed) {
         saveDatabase(true);
       } else {
         saveDatabase(false);
